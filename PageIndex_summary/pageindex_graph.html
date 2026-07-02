@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning - Graph</title>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #64748b;
+      --line: #d9dee7;
+      --edge: #aab4c2;
+      --blue: #075fc7;
+      --green: #16803a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      padding: 16px 22px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 21px;
+      line-height: 1.3;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    input, button {
+      height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      font: inherit;
+    }
+    input {
+      width: min(520px, 100%);
+      padding: 0 10px;
+    }
+    button {
+      padding: 0 10px;
+      cursor: pointer;
+    }
+    button:hover { color: var(--blue); border-color: var(--blue); }
+    .stats { color: var(--muted); font-size: 14px; }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 0;
+      height: calc(100vh - 91px);
+    }
+    .canvas {
+      overflow: auto;
+      padding: 18px;
+    }
+    .side {
+      overflow: auto;
+      border-left: 1px solid var(--line);
+      background: var(--panel);
+      padding: 18px;
+    }
+    .side h2 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      line-height: 1.3;
+    }
+    .side .meta {
+      margin-bottom: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .field-label {
+      margin-top: 14px;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .text-block {
+      margin-top: 5px;
+      padding: 10px;
+      border-radius: 6px;
+      background: #f3f4f6;
+      white-space: pre-wrap;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    svg {
+      min-width: 100%;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .edge {
+      fill: none;
+      stroke: var(--edge);
+      stroke-width: 1.6;
+    }
+    .graph-node {
+      cursor: pointer;
+    }
+    .graph-node circle {
+      fill: #fff;
+      stroke: currentColor;
+      stroke-width: 3;
+    }
+    .graph-node rect {
+      fill: #fff;
+      stroke: #d8dee8;
+    }
+    .graph-node:hover rect,
+    .graph-node.selected rect {
+      stroke: currentColor;
+      stroke-width: 2;
+    }
+    .node-title {
+      font-size: 13px;
+      font-weight: 650;
+      fill: #17202a;
+    }
+    .node-meta {
+      font-size: 11px;
+      fill: var(--muted);
+    }
+    .depth-0 { color: #075fc7; }
+    .depth-1 { color: #16803a; }
+    .depth-2 { color: #b35a00; }
+    .depth-3 { color: #8b3fb8; }
+    .depth-4 { color: #b42318; }
+    .depth-5 { color: #0f766e; }
+    .depth-6 { color: #475569; }
+    .dim { opacity: 0.14; }
+    .match circle, .match rect {
+      stroke: #eab308;
+      stroke-width: 3;
+    }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; height: auto; }
+      .side { border-left: 0; border-top: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning</h1>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Search title, node_id, summary...">
+      <button type="button" id="fit">Scroll to root</button>
+      <span class="stats">62 nodes · 61 edges</span>
+    </div>
+  </header>
+  <div class="layout">
+    <main class="canvas" id="canvas">
+      <svg viewBox="0 0 1120 4548" width="1120" height="4548" role="img">
+        <g class="edges"><path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 60.0, 328.0 60.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 142.0, 328.0 142.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 224.0, 328.0 224.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 306.0, 328.0 306.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 388.0, 328.0 388.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 470.0, 328.0 470.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 552.0, 328.0 552.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 634.0, 328.0 634.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 716.0, 328.0 716.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 798.0, 328.0 798.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 1180.7, 328.0 1180.7" />
+<path class="edge" d="M 508.0 1180.7 C 548.0 1180.7, 548.0 880.0, 588.0 880.0" />
+<path class="edge" d="M 508.0 1180.7 C 548.0 1180.7, 548.0 962.0, 588.0 962.0" />
+<path class="edge" d="M 508.0 1180.7 C 548.0 1180.7, 548.0 1126.0, 588.0 1126.0" />
+<path class="edge" d="M 768.0 1126.0 C 808.0 1126.0, 808.0 1044.0, 848.0 1044.0" />
+<path class="edge" d="M 768.0 1126.0 C 808.0 1126.0, 808.0 1126.0, 848.0 1126.0" />
+<path class="edge" d="M 768.0 1126.0 C 808.0 1126.0, 808.0 1208.0, 848.0 1208.0" />
+<path class="edge" d="M 508.0 1180.7 C 548.0 1180.7, 548.0 1290.0, 588.0 1290.0" />
+<path class="edge" d="M 508.0 1180.7 C 548.0 1180.7, 548.0 1372.0, 588.0 1372.0" />
+<path class="edge" d="M 508.0 1180.7 C 548.0 1180.7, 548.0 1454.0, 588.0 1454.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 1536.0, 328.0 1536.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 1754.7, 328.0 1754.7" />
+<path class="edge" d="M 508.0 1754.7 C 548.0 1754.7, 548.0 1618.0, 588.0 1618.0" />
+<path class="edge" d="M 508.0 1754.7 C 548.0 1754.7, 548.0 1700.0, 588.0 1700.0" />
+<path class="edge" d="M 508.0 1754.7 C 548.0 1754.7, 548.0 1946.0, 588.0 1946.0" />
+<path class="edge" d="M 768.0 1946.0 C 808.0 1946.0, 808.0 1782.0, 848.0 1782.0" />
+<path class="edge" d="M 768.0 1946.0 C 808.0 1946.0, 808.0 1864.0, 848.0 1864.0" />
+<path class="edge" d="M 768.0 1946.0 C 808.0 1946.0, 808.0 1946.0, 848.0 1946.0" />
+<path class="edge" d="M 768.0 1946.0 C 808.0 1946.0, 808.0 2028.0, 848.0 2028.0" />
+<path class="edge" d="M 768.0 1946.0 C 808.0 1946.0, 808.0 2110.0, 848.0 2110.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 2192.0, 328.0 2192.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 2274.0, 328.0 2274.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 2356.0, 328.0 2356.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 2438.0, 328.0 2438.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 2520.0, 328.0 2520.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 3090.6, 328.0 3090.6" />
+<path class="edge" d="M 508.0 3090.6 C 548.0 3090.6, 548.0 2602.0, 588.0 2602.0" />
+<path class="edge" d="M 508.0 3090.6 C 548.0 3090.6, 548.0 2684.0, 588.0 2684.0" />
+<path class="edge" d="M 508.0 3090.6 C 548.0 3090.6, 548.0 2766.0, 588.0 2766.0" />
+<path class="edge" d="M 508.0 3090.6 C 548.0 3090.6, 548.0 2848.0, 588.0 2848.0" />
+<path class="edge" d="M 508.0 3090.6 C 548.0 3090.6, 548.0 2930.0, 588.0 2930.0" />
+<path class="edge" d="M 508.0 3090.6 C 548.0 3090.6, 548.0 3012.0, 588.0 3012.0" />
+<path class="edge" d="M 508.0 3090.6 C 548.0 3090.6, 548.0 3094.0, 588.0 3094.0" />
+<path class="edge" d="M 508.0 3090.6 C 548.0 3090.6, 548.0 3176.0, 588.0 3176.0" />
+<path class="edge" d="M 508.0 3090.6 C 548.0 3090.6, 548.0 3258.0, 588.0 3258.0" />
+<path class="edge" d="M 508.0 3090.6 C 548.0 3090.6, 548.0 3340.0, 588.0 3340.0" />
+<path class="edge" d="M 508.0 3090.6 C 548.0 3090.6, 548.0 3422.0, 588.0 3422.0" />
+<path class="edge" d="M 508.0 3090.6 C 548.0 3090.6, 548.0 3955.0, 588.0 3955.0" />
+<path class="edge" d="M 768.0 3955.0 C 808.0 3955.0, 808.0 3504.0, 848.0 3504.0" />
+<path class="edge" d="M 768.0 3955.0 C 808.0 3955.0, 808.0 3586.0, 848.0 3586.0" />
+<path class="edge" d="M 768.0 3955.0 C 808.0 3955.0, 808.0 3668.0, 848.0 3668.0" />
+<path class="edge" d="M 768.0 3955.0 C 808.0 3955.0, 808.0 3750.0, 848.0 3750.0" />
+<path class="edge" d="M 768.0 3955.0 C 808.0 3955.0, 808.0 3832.0, 848.0 3832.0" />
+<path class="edge" d="M 768.0 3955.0 C 808.0 3955.0, 808.0 3914.0, 848.0 3914.0" />
+<path class="edge" d="M 768.0 3955.0 C 808.0 3955.0, 808.0 3996.0, 848.0 3996.0" />
+<path class="edge" d="M 768.0 3955.0 C 808.0 3955.0, 808.0 4078.0, 848.0 4078.0" />
+<path class="edge" d="M 768.0 3955.0 C 808.0 3955.0, 808.0 4160.0, 848.0 4160.0" />
+<path class="edge" d="M 768.0 3955.0 C 808.0 3955.0, 808.0 4242.0, 848.0 4242.0" />
+<path class="edge" d="M 768.0 3955.0 C 808.0 3955.0, 808.0 4324.0, 848.0 4324.0" />
+<path class="edge" d="M 768.0 3955.0 C 808.0 3955.0, 808.0 4406.0, 848.0 4406.0" />
+<path class="edge" d="M 248.0 1406.0 C 288.0 1406.0, 288.0 4488.0, 328.0 4488.0" /></g>
+        <g class="nodes">
+<g class="graph-node depth-0" data-index="0" transform="translate(80.0 1406.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">DeepSeek-R1: Incentivizing Reas...</text>
+  <text class="node-meta" x="32" y="15">id 0000 p. 1</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="1" transform="translate(340.0 60.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Abstract</text>
+  <text class="node-meta" x="32" y="15">id 0001 p. 1</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="2" transform="translate(340.0 142.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">1. Introduction</text>
+  <text class="node-meta" x="32" y="15">id 0002 p. 1</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="3" transform="translate(340.0 224.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">2. DeepSeek-R1-Zero</text>
+  <text class="node-meta" x="32" y="15">id 0003 p. 2</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="4" transform="translate(340.0 306.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">3. DeepSeek-R1</text>
+  <text class="node-meta" x="32" y="15">id 0004 p. 6</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="5" transform="translate(340.0 388.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">4. Experiment</text>
+  <text class="node-meta" x="32" y="15">id 0005 p. 8</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="6" transform="translate(340.0 470.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">5. Ethics and Safety Statement</text>
+  <text class="node-meta" x="32" y="15">id 0006 p. 10</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="7" transform="translate(340.0 552.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">6. Conclusion, Limitation, and ...</text>
+  <text class="node-meta" x="32" y="15">id 0007 p. 10</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="8" transform="translate(340.0 634.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">7. Author List</text>
+  <text class="node-meta" x="32" y="15">id 0008 p. 11</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="9" transform="translate(340.0 716.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Appendix</text>
+  <text class="node-meta" x="32" y="15">id 0009 p. 13</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="10" transform="translate(340.0 798.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">A. Background</text>
+  <text class="node-meta" x="32" y="15">id 0010 p. 13</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="11" transform="translate(340.0 1180.7)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">B. Training Details</text>
+  <text class="node-meta" x="32" y="15">id 0011 p. 17</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="12" transform="translate(600.0 880.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">B.1. RL Infrastructure</text>
+  <text class="node-meta" x="32" y="15">id 0012 p. 17</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="13" transform="translate(600.0 962.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">B.2. Reward Model Prompt</text>
+  <text class="node-meta" x="32" y="15">id 0013 p. 18</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="14" transform="translate(600.0 1126.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">B.3. Data Recipe</text>
+  <text class="node-meta" x="32" y="15">id 0014 p. 19</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="15" transform="translate(860.0 1044.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">B.3.1. RL Data</text>
+  <text class="node-meta" x="32" y="15">id 0015 p. 19</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="16" transform="translate(860.0 1126.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">B.3.2. DeepSeek-R1 Cold Start</text>
+  <text class="node-meta" x="32" y="15">id 0016 p. 20</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="17" transform="translate(860.0 1208.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">B.3.3. 800K Supervised Data</text>
+  <text class="node-meta" x="32" y="15">id 0017 p. 26</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="18" transform="translate(600.0 1290.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">B.4. Hyper-Parameters</text>
+  <text class="node-meta" x="32" y="15">id 0018 p. 34</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="19" transform="translate(600.0 1372.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">B.5. Reward Hacking</text>
+  <text class="node-meta" x="32" y="15">id 0019 p. 35</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="20" transform="translate(600.0 1454.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">B.6. Ablation Study of Language...</text>
+  <text class="node-meta" x="32" y="15">id 0020 p. 35</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="21" transform="translate(340.0 1536.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">C. Self-Evolution of DeepSeek-R...</text>
+  <text class="node-meta" x="32" y="15">id 0021 p. 37</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="22" transform="translate(340.0 1754.7)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">D. Evaluation of DeepSeek-R1</text>
+  <text class="node-meta" x="32" y="15">id 0022 p. 39</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="23" transform="translate(600.0 1618.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">D.1. Experiment Setup</text>
+  <text class="node-meta" x="32" y="15">id 0023 p. 39</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="24" transform="translate(600.0 1700.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">D.2. Main Results</text>
+  <text class="node-meta" x="32" y="15">id 0024 p. 41</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="25" transform="translate(600.0 1946.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">D.3. DeepSeek-R1 Safety Report</text>
+  <text class="node-meta" x="32" y="15">id 0025 p. 44</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="26" transform="translate(860.0 1782.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">D.3.1. Risk Control System for ...</text>
+  <text class="node-meta" x="32" y="15">id 0026 p. 44</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="27" transform="translate(860.0 1864.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">D.3.2. R1 Safety Evaluation on ...</text>
+  <text class="node-meta" x="32" y="15">id 0027 p. 46</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="28" transform="translate(860.0 1946.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">D.3.3. Safety Taxonomic Study o...</text>
+  <text class="node-meta" x="32" y="15">id 0028 p. 48</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="29" transform="translate(860.0 2028.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">D.3.4. Multilingual Safety Perf...</text>
+  <text class="node-meta" x="32" y="15">id 0029 p. 53</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="30" transform="translate(860.0 2110.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">D.3.5. Robustness against Jailb...</text>
+  <text class="node-meta" x="32" y="15">id 0030 p. 53</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="31" transform="translate(340.0 2192.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">E. More Analysis</text>
+  <text class="node-meta" x="32" y="15">id 0031 p. 54</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="32" transform="translate(340.0 2274.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">F. DeepSeek-R1 Distillation</text>
+  <text class="node-meta" x="32" y="15">id 0032 p. 60</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="33" transform="translate(340.0 2356.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">G. Discussion</text>
+  <text class="node-meta" x="32" y="15">id 0033 p. 62</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="34" transform="translate(340.0 2438.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">H. Related Work</text>
+  <text class="node-meta" x="32" y="15">id 0034 p. 64</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="35" transform="translate(340.0 2520.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">I. Open Weights, Code, and Data</text>
+  <text class="node-meta" x="32" y="15">id 0035 p. 65</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="36" transform="translate(340.0 3090.6)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">J. Evaluation Prompts and Settings</text>
+  <text class="node-meta" x="32" y="15">id 0036 p. 66</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="37" transform="translate(600.0 2602.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">PROMPT</text>
+  <text class="node-meta" x="32" y="15">id 0037 p. 66</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="38" transform="translate(600.0 2684.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Evaluation</text>
+  <text class="node-meta" x="32" y="15">id 0038 p. 66</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="39" transform="translate(600.0 2766.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">PROMPT</text>
+  <text class="node-meta" x="32" y="15">id 0039 p. 67</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="40" transform="translate(600.0 2848.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Question:</text>
+  <text class="node-meta" x="32" y="15">id 0040 p. 67</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="41" transform="translate(600.0 2930.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Choices:</text>
+  <text class="node-meta" x="32" y="15">id 0041 p. 67</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="42" transform="translate(600.0 3012.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Evaluation</text>
+  <text class="node-meta" x="32" y="15">id 0042 p. 67</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="43" transform="translate(600.0 3094.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">PROMPT</text>
+  <text class="node-meta" x="32" y="15">id 0043 p. 68</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="44" transform="translate(600.0 3176.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Evaluation</text>
+  <text class="node-meta" x="32" y="15">id 0044 p. 68</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="45" transform="translate(600.0 3258.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">---**PROMPT**</text>
+  <text class="node-meta" x="32" y="15">id 0045 p. 69</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="46" transform="translate(600.0 3340.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">---**Evaluation**</text>
+  <text class="node-meta" x="32" y="15">id 0046 p. 69</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="47" transform="translate(600.0 3422.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">PROMPT</text>
+  <text class="node-meta" x="32" y="15">id 0047 p. 70</text>
+</g>
+
+
+<g class="graph-node depth-2" data-index="48" transform="translate(600.0 3955.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Examples — Passage: Looking to ...</text>
+  <text class="node-meta" x="32" y="15">id 0048 p. 70</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="49" transform="translate(860.0 3504.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Evaluation</text>
+  <text class="node-meta" x="32" y="15">id 0049 p. 70</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="50" transform="translate(860.0 3586.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">---**PROMPT**</text>
+  <text class="node-meta" x="32" y="15">id 0050 p. 71</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="51" transform="translate(860.0 3668.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">---**Evaluation**</text>
+  <text class="node-meta" x="32" y="15">id 0051 p. 71</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="52" transform="translate(860.0 3750.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">PROMPT</text>
+  <text class="node-meta" x="32" y="15">id 0052 p. 73</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="53" transform="translate(860.0 3832.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Evaluation</text>
+  <text class="node-meta" x="32" y="15">id 0053 p. 73</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="54" transform="translate(860.0 3914.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">PROMPT</text>
+  <text class="node-meta" x="32" y="15">id 0054 p. 74</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="55" transform="translate(860.0 3996.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Evaluation</text>
+  <text class="node-meta" x="32" y="15">id 0055 p. 74</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="56" transform="translate(860.0 4078.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Instruction</text>
+  <text class="node-meta" x="32" y="15">id 0056 p. 74</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="57" transform="translate(860.0 4160.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Model Outputs</text>
+  <text class="node-meta" x="32" y="15">id 0057 p. 74</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="58" transform="translate(860.0 4242.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Task</text>
+  <text class="node-meta" x="32" y="15">id 0058 p. 74</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="59" transform="translate(860.0 4324.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">PROMPT</text>
+  <text class="node-meta" x="32" y="15">id 0059 p. 75</text>
+</g>
+
+
+<g class="graph-node depth-3" data-index="60" transform="translate(860.0 4406.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">Evaluation</text>
+  <text class="node-meta" x="32" y="15">id 0060 p. 75</text>
+</g>
+
+
+<g class="graph-node depth-1" data-index="61" transform="translate(340.0 4488.0)">
+  <circle r="13" />
+  <rect x="20" y="-27" width="148" height="54" rx="8" />
+  <text class="node-title" x="32" y="-5">References</text>
+  <text class="node-meta" x="32" y="15">id 0061 p. 79</text>
+</g>
+</g>
+      </svg>
+    </main>
+    <aside class="side" id="details">
+      <h2>Select a node</h2>
+      <div class="meta">Click a graph node to view its summary.</div>
+    </aside>
+  </div>
+  <script>
+    const data = [{"id": "0000", "title": "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", "page": 1, "summary": "", "prefix_summary": "# DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning\n\nDeepSeek-AI\n\nresearch@deepseek.com\n", "depth": 0, "children": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 21, 22, 31, 32, 33, 34, 35, 36, 61], "x": 80, "y": 1405.9958333333334}, {"id": "0001", "title": "Abstract", "page": 1, "summary": "This text introduces a reinforcement learning framework that enables LLMs to develop advanced reasoning capabilities—such as self-reflection and verification—without human-annotated data. It demonstrates that this approach outperforms traditional supervised learning on complex STEM and coding tasks and notes that these emergent reasoning patterns can be leveraged to enhance smaller models.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 60}, {"id": "0002", "title": "1. Introduction", "page": 1, "summary": "The text discusses the evolution of reasoning in LLMs, moving from traditional CoT prompting and supervised fine-tuning to the development of DeepSeek-R1-Zero, which uses reinforcement learning to foster emergent reasoning. It addresses the limitations of this approach—such as language mixing and narrow task scope—by introducing DeepSeek-R1, a multi-stage trained model that aligns reasoning capabilities with human preferences. Finally, it announces the public release of the DeepSeek-R1 series and smaller distilled models to support broader research and accessibility.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 142}, {"id": "0003", "title": "2. DeepSeek-R1-Zero", "page": 2, "summary": "This text details the development of DeepSeek-R1-Zero, which utilizes reinforcement learning via Group Relative Policy Optimization (GRPO) to enhance reasoning capabilities without supervised fine-tuning. It describes the training infrastructure, the use of rule-based rewards for accuracy and formatting, and the deliberate exclusion of neural reward models. The document highlights the model's significant performance gains on reasoning benchmarks, its autonomous development of advanced problem-solving strategies—such as reflective thinking and 'aha moments'—and introduces the multi-stage training pipeline for the broader DeepSeek-R1 model.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 224}, {"id": "0004", "title": "3. DeepSeek-R1", "page": 6, "summary": "This text details the development of DeepSeek-R1, a model designed to improve upon DeepSeek-R1-Zero by enhancing readability, language consistency, and human alignment. The pipeline involves a multi-stage process including cold-start data, reinforcement learning (RL), and supervised fine-tuning (SFT). It describes the implementation of model-based rewards for helpfulness and safety, specifies the training methodologies and hyperparameters for two distinct RL stages, and explains the use of language consistency rewards and rule-based reasoning rewards to balance performance, safety, and coherence.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 306}, {"id": "0005", "title": "4. Experiment", "page": 8, "summary": "This text details the experimental evaluation of the DeepSeek-R1 model across a wide array of benchmarks spanning reasoning, coding, mathematics, and general language tasks. It tracks the model's evolution through various developmental stages, highlighting the trade-offs between reasoning performance and instruction-following capabilities. The text explains how the integration of diverse datasets in later stages improved general proficiency and user preference, while noting that final refinements focused on instruction-following. Additionally, it points to supplementary documentation regarding model safety, comparative analyses, and the scalability of reasoning capabilities.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 388}, {"id": "0006", "title": "5. Ethics and Safety Statement", "page": 10, "summary": "This section addresses the ethical and safety implications of DeepSeek-R1's advanced reasoning, noting risks like jailbreaking and malicious fine-tuning. It highlights a detailed safety report confirming the model's moderate inherent safety, which is elevated to a superior level when combined with a risk control system.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 470}, {"id": "0007", "title": "6. Conclusion, Limitation, and Future Work", "page": 10, "summary": "This text concludes the study of DeepSeek-R1 models, which utilize large-scale reinforcement learning to foster complex reasoning. It details current limitations, including weaknesses in structured output, tool integration, token efficiency, language consistency, prompt sensitivity, and software engineering performance. Furthermore, it addresses the inherent challenges of pure RL, such as reward hacking and the difficulty of evaluating subjective tasks. The text outlines current workarounds using supervised data and proposes future research directions, focusing on improving reward model robustness and integrating external tools to expand the scope of machine-driven reasoning.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 552}, {"id": "0008", "title": "7. Author List", "page": 11, "summary": "This text provides a comprehensive list of project contributors, categorized into core and general roles, with specific notations for those no longer affiliated. It details the technical contributions of core members, covering the development of R1-Zero and R1, the creation and refinement of the GRPO algorithm, PPO clipping strategies, domain-specific data iteration, system-level RL pipeline optimization, and the management of the R1-distill series.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 634}, {"id": "0009", "title": "Appendix", "page": 13, "summary": "## Appendix\n", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 716}, {"id": "0010", "title": "A. Background", "page": 13, "summary": "This text details the development and training methodology of the DeepSeek-V3 and DeepSeek-R1 models. It covers the model's Mixture-of-Experts architecture and pre-training data, discusses the standard SFT-RL post-training pipeline, and highlights the limitations of SFT in fostering reasoning. Furthermore, it provides a comprehensive technical comparison between GRPO and PPO, demonstrating that GRPO is a more efficient and practical reinforcement learning algorithm for training large-scale models with long chain-of-thought reasoning by removing the need for a resource-intensive value model.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 798}, {"id": "0011", "title": "B. Training Details", "page": 17, "summary": "", "prefix_summary": "## B. Training Details\n", "depth": 1, "children": [12, 13, 14, 18, 19, 20], "x": 340, "y": 1180.6666666666667}, {"id": "0012", "title": "B.1. RL Infrastructure", "page": 17, "summary": "The text describes a modular, scalable RL training infrastructure partitioned into four phases: Rollout (sampling with expert parallelism and speculative decoding), Inference (reward model evaluation), Rule-based Reward (asynchronous execution for latency hiding), and Training (parameter updates using data packing and pipeline parallelism). It also highlights an automated memory management strategy that offloads model instances between phases to maximize VRAM availability.", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 880}, {"id": "0013", "title": "B.2. Reward Model Prompt", "page": 18, "summary": "The text outlines the methodology for evaluating AI assistant responses, requiring judges to provide independent answers and assess quality based on accuracy, helpfulness, and relevance before issuing a final verdict. Additionally, it provides a summary table of RL training data, detailing the volume, question types, and output formats across Math, Code, STEM, Logic, and General categories.", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 962}, {"id": "0014", "title": "B.3. Data Recipe", "page": 19, "summary": "", "prefix_summary": "### B.3. Data Recipe\n", "depth": 2, "children": [15, 16, 17], "x": 600, "y": 1126.0}, {"id": "0015", "title": "B.3.1. RL Data", "page": 19, "summary": "This text details the reinforcement learning (RL) dataset used to train DeepSeek-R1, which comprises five categories: mathematics, coding, STEM, logic, and general data. It outlines the composition, evaluation methods, and reward mechanisms for each, including binary answer matching for math and STEM, test-case validation for coding, objective assessment for logic puzzles, and dual reward models for ensuring model helpfulness and harmlessness.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 1044}, {"id": "0016", "title": "B.3.2. DeepSeek-R1 Cold Start", "page": 20, "summary": "The text details the development process for DeepSeek-R1, focusing on cold start data creation through human-annotated reasoning traces and LLM-based refinement to ensure intuitive, first-person, and language-consistent responses. It describes the systematic collection and validation of competitive programming problems, including the use of DeepSeek-V2.5 to generate and filter test cases. Additionally, it provides templates for adversarial input generation, few-shot prompting for simple math tasks, and a framework for using DeepSeek-V3 as an automated judge to evaluate the correctness of reasoning-based answers.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 1126}, {"id": "0017", "title": "B.3.3. 800K Supervised Data", "page": 26, "summary": "This text details the construction and methodology of an 800,000-sample supervised fine-tuning dataset for the DeepSeek-R1 model. It covers the curation of reasoning data via rejection sampling and generative reward models, as well as the integration of non-reasoning data for general tasks and software engineering. The document outlines design principles for the model's 'thinking' style, emphasizes the role of human verification in improving output quality, and provides statistical data and specific examples of SFT trajectories across various domains, while acknowledging the current limitation of primarily single-turn interactions.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 1208}, {"id": "0018", "title": "B.4. Hyper-Parameters", "page": 34, "summary": "This text details the technical hyper-parameters and training infrastructure for the DeepSeek-R1 project. It covers specific configurations for DeepSeek-R1-Zero-Qwen-32B, SFT, and distillation processes, including learning rates, batch sizes, and context lengths. Additionally, it provides a reference table for distilled model base configurations and summarizes the computational resources and time required for training the models and preparing SFT datasets.", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 1290}, {"id": "0019", "title": "B.5. Reward Hacking", "page": 35, "summary": "### B.5. Reward Hacking\n\nIn the context of LLM training, reward hacking refers to the phenomenon wherein a model exploits flaws or biases in the reward function, thereby achieving high reward scores without truly aligning with the underlying human intent. In our work, we observe such reward hacking behavior when employing the helpful reward model. Specifically, if the reward model contains systematic biases or inaccuracies, the LLM may learn to generate responses that are rated highly by the model but diverge from authentic human preferences. This misalignment can manifest in performance degradation on tasks requiring complex reasoning, as illustrated in Figure 6.\n", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 1372}, {"id": "0020", "title": "B.6. Ablation Study of Language Consistency Reward", "page": 35, "summary": "This text details an ablation study on the Language Consistency (LC) reward, demonstrating its effectiveness in maintaining language stability during RL despite a slight trade-off in coding performance. It also highlights instances of reward hacking, provides a comprehensive cost analysis for training DeepSeek-R1, and explains that the LC reward is prioritized for better human-readable output.", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 1454}, {"id": "0021", "title": "C. Self-Evolution of DeepSeek-R1-Zero", "page": 37, "summary": "This text details the self-evolution of DeepSeek-R1-Zero, highlighting its improved performance on the MATH dataset across varying difficulty levels and the emergence of advanced reflective reasoning behaviors. It explains that while the model masters simpler tasks early, it shows substantial growth in solving complex problems over time. Furthermore, it documents a significant increase in reflective language usage and the development of specific, stage-dependent reflective strategies throughout the training process.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 1536}, {"id": "0022", "title": "D. Evaluation of DeepSeek-R1", "page": 39, "summary": "", "prefix_summary": "## D. Evaluation of DeepSeek-R1\n", "depth": 1, "children": [23, 24, 25], "x": 340, "y": 1754.6666666666667}, {"id": "0023", "title": "D.1. Experiment Setup", "page": 39, "summary": "This text details the experimental setup for evaluating large language models, covering a wide array of benchmarks for general knowledge, reasoning, coding, and mathematics. It outlines rigorous decontamination procedures to ensure evaluation integrity, describes specific prompt engineering and formatting protocols for various tasks, identifies the baseline models used for comparative analysis, and explains the evaluation methodology, which utilizes pass@k metrics and sampling parameters to ensure reliable performance assessment.", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 1618}, {"id": "0024", "title": "D.2. Main Results", "page": 41, "summary": "This text provides a comprehensive performance evaluation of the DeepSeek-R1 model. It includes detailed benchmark tables comparing DeepSeek-R1 to major industry models across diverse categories such as STEM, coding, and language tasks. The document highlights the model's strengths in reasoning and instruction following, compares its performance against human competitors in specialized competitions, and details its high ranking on the ChatbotArena platform, emphasizing its competitive status as an open-source model.", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 1700}, {"id": "0025", "title": "D.3. DeepSeek-R1 Safety Report", "page": 44, "summary": "", "prefix_summary": "This section outlines the comprehensive safety and security risk assessment for DeepSeek-R1, addressing the balance between open-source accessibility and potential misuse. It details the model's risk control systems, comparative performance on public benchmarks, in-house taxonomy-based safety testing, multilingual safety, and resilience against jailbreak attempts.", "depth": 2, "children": [26, 27, 28, 29, 30], "x": 600, "y": 1946.0}, {"id": "0026", "title": "D.3.1. Risk Control System for DeepSeek-R1", "page": 44, "summary": "This text outlines the external risk control system for DeepSeek-R1, detailing a comprehensive set of eleven safety standards to prevent harmful model outputs. It describes a two-stage implementation process involving keyword-based filtering and model-based review via DeepSeek-V3, provides a standardized format for evaluating safety violations, and recommends that developers adopt and customize these mechanisms to improve service security.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 1782}, {"id": "0027", "title": "D.3.2. R1 Safety Evaluation on Standard Benchmarks", "page": 46, "summary": "This section details the safety evaluation of the DeepSeek-R1 model using six diverse benchmarks (SST, BBQ, ART, XSTest, DNA, and HarmBench). It outlines the specific focus of each benchmark, the methodology used to obtain and refine results—including the use of GPT-4o for HarmBench and HELM for other datasets—and provides a comparative analysis. The results demonstrate that while DeepSeek-R1 maintains strong safety performance across most categories, it shows a notable performance gap in HarmBench due to challenges with intellectual property-related queries.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 1864}, {"id": "0028", "title": "D.3.3. Safety Taxonomic Study of R1 on In-House Benchmark", "page": 48, "summary": "This section details the safety taxonomic research for the DeepSeek-R1 model, covering the development of a comprehensive, bilingual in-house safety benchmark categorized into 28 sub-topics across four major domains. It outlines the evaluation methodology using GPT-4o as a judge to measure model performance based on 'Unsafe' and 'Rejection' rates. The text provides a comparative analysis of DeepSeek-R1 against other frontier models, demonstrating the effectiveness of an integrated risk control system in improving safety, while highlighting the model's specific performance strengths and areas requiring further development.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 1946}, {"id": "0029", "title": "D.3.4. Multilingual Safety Performance", "page": 53, "summary": "This section details the multilingual safety evaluation of DeepSeek-V3 and DeepSeek-R1 across 50 languages. Using a curated 9,330-question dataset and an LLM-as-a-judge scoring system, the study compares the models' performance against Claude-3.7-Sonnet and GPT-4o. Results indicate that DeepSeek models achieve state-of-the-art safety with risk control systems enabled and maintain competitive safety standards even in their base versions, with DeepSeek-R1 showing no significant language-specific vulnerabilities.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 2028}, {"id": "0030", "title": "D.3.5. Robustness against Jailbreaking", "page": 53, "summary": "This text details the evaluation of LLM robustness against jailbreaking attacks using a custom test suite of 2,232 prompts and an LLM-as-a-Judge assessment framework. It presents comparative performance data for several frontier models, highlighting that all models exhibit increased vulnerability to jailbreaks. The analysis notes that reasoning models rely heavily on external risk control systems for safety, and it emphasizes that open-source models face greater security challenges, prompting a recommendation for developers to implement robust risk control measures.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 2110}, {"id": "0031", "title": "E. More Analysis", "page": 54, "summary": "This text provides a comprehensive performance evaluation of the DeepSeek-R1 model. It compares R1 against DeepSeek-V3, detailing R1's enhanced reasoning capabilities in STEM, coding, and long-context tasks. The document analyzes R1's performance on real-world math competitions, its adaptive use of Chain-of-Thought (CoT) tokens based on problem complexity, and its superiority over non-reasoning models that lack self-correction mechanisms. Finally, it examines the model's progress across various training stages and highlights the effectiveness of combining long reasoning chains with traditional scaling methods like majority voting.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 2192}, {"id": "0032", "title": "F. DeepSeek-R1 Distillation", "page": 60, "summary": "This text details the use of model distillation to transfer knowledge from DeepSeek-R1 to smaller open-source models (Qwen and LLaMA) to improve efficiency and accessibility. It presents empirical evidence that distilled models outperform both non-reasoning baselines and models trained solely via large-scale reinforcement learning. While the study highlights the economic and performance advantages of distillation, it also acknowledges that large-scale RL can independently foster reasoning capabilities in base models and suggests that future advancements may require a combination of larger base models and more extensive reinforcement learning.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 2274}, {"id": "0033", "title": "G. Discussion", "page": 62, "summary": "This text discusses key findings and unsuccessful experiments in developing reasoning models. It emphasizes that RL effectiveness depends on large model capacity and robust reward signals, advocating for a hybrid SFT-RL pipeline to optimize reasoning while maintaining task reliability. Additionally, it details why Process Reward Models and Monte Carlo Tree Search were found to be less effective or difficult to scale due to issues like reward hacking, high computational overhead, and the inherent complexity of token-based search spaces.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 2356}, {"id": "0034", "title": "H. Related Work", "page": 64, "summary": "This text reviews the literature on enhancing LLM reasoning through three primary lenses: Chain-of-Thought (CoT) prompting techniques, methods for scaling inference-time compute, and the application of Reinforcement Learning (RL) for reasoning. It details various prompt engineering and search strategies to improve performance, discusses the shift toward inference-time scaling as pre-training data becomes constrained, and critiques traditional RL alignment pipelines. Finally, it introduces the authors' methodology, which employs outcome-based RL on base models to encourage the development of innovative, non-imitative problem-solving strategies.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 2438}, {"id": "0035", "title": "I. Open Weights, Code, and Data", "page": 65, "summary": "This text details the public release of DeepSeek-R1, its variants, and distilled models, alongside the availability of inference code, usage documentation, and training data (SFT and RL). It also provides a technical guide for setting up and running the model, including weight downloading, dependency installation, format conversion, and execution commands.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 2520}, {"id": "0036", "title": "J. Evaluation Prompts and Settings", "page": 66, "summary": "", "prefix_summary": "## J. Evaluation Prompts and Settings\n\nTable 18 | MMLU assesses a model's factual and conceptual understanding across 57 tasks spanning STEM (science, technology, engineering, mathematics), humanities, social sciences, and professional fields (e.g., law, medicine). The benchmark is commonly used to evaluate a model's ability to perform general knowledge reasoning and multitask proficiency across a diverse range of subjects and tasks. Here is an example of MMLU.\n", "depth": 1, "children": [37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48], "x": 340, "y": 3090.5833333333335}, {"id": "0037", "title": "PROMPT", "page": 66, "summary": "### PROMPT\n\nAnswer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of ABCD. Think step by step before answering.\n\nWhich tool technology is associated with Neandertals?\n\nA. Aurignacian\nB. Acheulean\nC. Mousterian\nD. both b and c\n", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 2602}, {"id": "0038", "title": "Evaluation", "page": 66, "summary": "### Evaluation\n\nParse the last line in response to judge if the choice equals to ground truth.\n\n66\n\nTable 19 | MMLU-Redux is a subset of 5,700 manually re-annotated questions across all 57 MMLU subjects. MMLU-Redux focuses on improving the quality, clarity, and robustness of the benchmark by reducing noise, ambiguities, and potential biases in the MMLU, while potentially adjusting the scope or difficulty of tasks to better align with modern evaluation needs. Here is an example of MMLU-Redux.\n", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 2684}, {"id": "0039", "title": "PROMPT", "page": 67, "summary": "### PROMPT\n", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 2766}, {"id": "0040", "title": "Question:", "page": 67, "summary": "### Question:\n\nSauna use, sometimes referred to as \"sauna bathing,\" is characterized by short-term passive exposure to extreme heat ... In fact, sauna use has been proposed as an alternative to exercise for people who are unable to engage in physical activity due to chronic disease or physical limitations.[13]\n\nAccording to the article, which of the following is NOT a benefit of sauna use?\n", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 2848}, {"id": "0041", "title": "Choices:", "page": 67, "summary": "### Choices:\n\n- (A) Decreased risk of heart attacks.\n- (B) Increase in stroke volume.\n- (C) Improved mental health.\n- (D) Decreased rate of erectile dysfunction.\n\nInstruction\n\nPlease answer this question by first reasoning and then selecting the correct choice.\n\nPresent your reasoning and solution in the following json format.\n\nPlease show your choice in the 'answer' field with only the choice letter, e.g., \"answer\": \"C\".\n\n{\n\"reasoning\": \"____\",\n\"answer\": \"____\"\n}\n", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 2930}, {"id": "0042", "title": "Evaluation", "page": 67, "summary": "### Evaluation\n\nParse the json output in response to judge if the answer equals to ground truth.\n\n67\n\nTable 20 | LiveCodeBench aims to evaluate model performance on the algorithm competition task, which collects new problems over time from contests across three competition platforms, namely LeetCode, AtCoder, and CodeForces.\n", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 3012}, {"id": "0043", "title": "PROMPT", "page": 68, "summary": "The text defines a programming problem involving the reordering of a stack of N integers by shifting the bottom K elements to the top. It specifies the input/output formats, constraints, provides illustrative examples, and requests a Python implementation to perform the operation.", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 3094}, {"id": "0044", "title": "Evaluation", "page": 68, "summary": "### Evaluation\n\nExtract the code wrapped by \" 'python\" ' in response to judge if the answer passes the test cases.\n\n68\n\nTable 21 | Compared to MMLU, MMLU-Pro features a curated subset of tasks, but with significantly increased difficulty. Questions in MMLU-Pro are designed to require deeper reasoning, multi-step problem-solving, and advanced domain-specific knowledge. For example, STEM tasks may involve complex mathematical derivations or nuanced scientific concepts, while humanities tasks may demand intricate contextual analysis.\n", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 3176}, {"id": "0045", "title": "---**PROMPT**", "page": 69, "summary": "The text provides a business-related multiple-choice question concerning advertising regulatory guidelines, requiring a step-by-step reasoning process to identify the correct restrictions on advertising content from a provided list of options.", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 3258}, {"id": "0046", "title": "---**Evaluation**", "page": 69, "summary": "### ---**Evaluation**\n\nParse the capital letter following 'Answer: ' in response to judge if the answer equals to ground truth.\n\n69\n\nTable 22 | DROP assesses a model's ability to understand and extract relevant information from extended textual passages. Unlike simpler question-answering benchmarks that focus on factual recall, DROP requires models to process and interpret context-rich paragraphs.\n", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 3340}, {"id": "0047", "title": "PROMPT", "page": 70, "summary": "### PROMPT\n\nYou will be asked to read a passage and answer a question. Some examples of passages and Q&A are provided below.\n", "prefix_summary": "", "depth": 2, "children": [], "x": 600, "y": 3422}, {"id": "0048", "title": "Examples — Passage: Looking to avoid back-to-back divisional losses, the Patriots traveled to Miami to face the 6-4 Dolphins at Dolphin Stadium ... Cassel's 415 passing yards made him the second quarterback in Patriots history to throw for at least 400 yards in two or more games; Drew Bledsoe had four 400+ yard passing games in his Patriots career.", "page": 70, "summary": "", "prefix_summary": "The text details the Chargers' 22-14 season-opening victory over the Raiders, highlighting Nate Kaeding's five field goals, Raiders' special teams errors, and Philip Rivers' 231-yard passing performance. It also covers the Chargers' red zone struggles, the debut of rookie Mike Harris, injury updates for key players, and historical context regarding the coach's record and the team's success at Oakland.", "depth": 2, "children": [49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60], "x": 600, "y": 3955.0}, {"id": "0049", "title": "Evaluation", "page": 70, "summary": "#### Evaluation\n\nParse the capital letter following \"Answer: \" in response to judge if the answer equals to ground truth.\n\n70\n\nTable 23 | Instruction-Following Evaluation (IFEval) is a benchmark designed to assess a model's ability to comply with explicit, verifiable instructions embedded within prompts. It targets a core competency of large language models (LLMs): producing outputs that meet multiple, clearly defined constraints specified by the user.\n", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 3504}, {"id": "0050", "title": "---**PROMPT**", "page": 71, "summary": "Quantum entanglement describes a state where particles remain interconnected regardless of distance, representing a core departure from classical physics. While measurements of these particles show perfect correlations, they also trigger systemic wave function collapses that challenged early physicists. This phenomenon led to the EPR paradox, with Einstein famously questioning the completeness of quantum mechanics due to its apparent violation of local realism.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 3586}, {"id": "0051", "title": "---**Evaluation**", "page": 71, "summary": "The text outlines two evaluation benchmarks: FRAMES, which tests RAG systems using provided source material, and Arena-Hard, which assesses LLM performance on open-ended, crowd-sourced prompts. It also provides a practical example of an evaluation task and instructions for comparing LLM outputs against ground truth data.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 3668}, {"id": "0052", "title": "PROMPT", "page": 73, "summary": "The text explains how to construct an SQL query that retrieves the top 10 rows from a primary table and joins them with three other tables using a shared 'code' field, providing a code example and instructions for selecting specific columns.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 3750}, {"id": "0053", "title": "Evaluation", "page": 73, "summary": "The text outlines the protocol for evaluating AI assistant responses as an impartial judge and provides a descriptive overview of the AlpacaEval 2.0 benchmark, characterizing it as an LLM-based subjective evaluation tool that is generally less demanding and requires less reasoning than the ArenaHard dataset.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 3832}, {"id": "0054", "title": "PROMPT", "page": 74, "summary": "#### PROMPT\n\nWhat are the names of some famous actors that started their careers on Broadway?\n", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 3914}, {"id": "0055", "title": "Evaluation", "page": 74, "summary": "#### Evaluation\n\n< |im, tart| >system\n\nYou are a highly efficient assistant, who evaluates and selects the best large language model (LLMs) based on the quality of their responses to a given instruction. This process will be used to create a leaderboard reflecting the most accurate and human-preferred answers.\n\n< |im,nd|>\n< |im, tart| >user\n\nI require a leaderboard for various large language models. I'll provide you with prompts given to these models and their corresponding outputs. Your task is to assess these responses, and select the model that produces the best output from a human perspective.\n", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 3996}, {"id": "0056", "title": "Instruction", "page": 74, "summary": "#### Instruction\n\n{\n    \"instruction\": \"\"\"{instruction}\"\"\"\n}\n", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 4078}, {"id": "0057", "title": "Model Outputs", "page": 74, "summary": "#### Model Outputs\n\nHere are the unordered outputs from the models. Each output is associated with a specific model, identified by a unique model identifier.\n\n{\n    {\n    \"model_identifier\": \"m\",\n    \"output\": \"\"\"{output_1}\"\n    },\n    {\n    \"model_identifier\": \"M\",\n    \"output\": \"\"\"{output_2}\"\n    }\n}\n", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 4160}, {"id": "0058", "title": "Task", "page": 74, "summary": "#### Task\n\nEvaluate the models based on the quality and relevance of their outputs, and select the model that generated the best output. Answer by providing the model identifier of the best model. We will use your output as the name of the best model, so make sure your output only contains one of the following model identifiers and nothing else (no quotes, no spaces, no new lines, ...): m or M.\n\nBest Model Identifier\n\n< |im,nd| >\n\n74\n\nTable 27 | The CLUEWSC (Chinese Language Understanding Evaluation Benchmark - Winograd Schema Challenge) is a specialized task within the CLUE benchmark suite designed to evaluate a model's commonsense reasoning and contextual understanding capabilities in Chinese.\n", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 4242}, {"id": "0059", "title": "PROMPT", "page": 75, "summary": "描述了崩龙珍与鞠琴的婚姻现状，以及她们在交谈中对彼此爱人及蒋盈波亡夫话题的刻意回避，并表达了对蒋盈波未来生活规划不宜过早讨论的共识。", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 4324}, {"id": "0060", "title": "Evaluation", "page": 75, "summary": "This text outlines several LLM evaluation benchmarks, including C-EVAL for Chinese academic knowledge, GPQA for graduate-level STEM reasoning, SimpleQA and C-SimpleQA for fact-seeking accuracy, and various mathematical benchmarks like AIME and MATH. It provides specific examples of prompts, evaluation formats, and grading methodologies for each, detailing how model responses are parsed and assessed against ground truth.", "prefix_summary": "", "depth": 3, "children": [], "x": 860, "y": 4406}, {"id": "0061", "title": "References", "page": 79, "summary": "The provided text consists of an extensive bibliography of academic papers, technical reports, and documentation covering the development, training, evaluation, and reasoning capabilities of large language models. It includes foundational research on scaling laws, reinforcement learning, and prompting techniques, alongside specific benchmarks for assessing model performance in mathematics, coding, safety, and general multi-task understanding.", "prefix_summary": "", "depth": 1, "children": [], "x": 340, "y": 4488}];
+    const graphNodes = [...document.querySelectorAll(".graph-node")];
+    const details = document.getElementById("details");
+    const canvas = document.getElementById("canvas");
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, ch => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[ch]));
+    }
+
+    function block(label, value) {
+      if (!value) return "";
+      return `<div class="field-label">${label}</div><div class="text-block">${escapeHtml(value)}</div>`;
+    }
+
+    function selectNode(index) {
+      graphNodes.forEach(node => node.classList.remove("selected"));
+      const el = graphNodes[index];
+      el.classList.add("selected");
+      const item = data[index];
+      const page = item.page == null ? "" : ` · page ${escapeHtml(item.page)}`;
+      details.innerHTML = `
+        <h2>${escapeHtml(item.title)}</h2>
+        <div class="meta">id ${escapeHtml(item.id)} · depth ${item.depth}${page}</div>
+        ${block("Prefix summary", item.prefix_summary)}
+        ${block("Summary", item.summary)}
+      `;
+    }
+
+    graphNodes.forEach(node => {
+      node.addEventListener("click", () => selectNode(Number(node.dataset.index)));
+    });
+
+    document.getElementById("search").addEventListener("input", event => {
+      const query = event.target.value.trim().toLowerCase();
+      graphNodes.forEach(node => {
+        node.classList.remove("dim", "match");
+      });
+      if (!query) return;
+      graphNodes.forEach((node, index) => {
+        const item = data[index];
+        const haystack = `${item.id} ${item.title} ${item.summary} ${item.prefix_summary}`.toLowerCase();
+        const matched = haystack.includes(query);
+        node.classList.toggle("match", matched);
+        node.classList.toggle("dim", !matched);
+      });
+    });
+
+    document.getElementById("fit").addEventListener("click", () => {
+      canvas.scrollTo({ left: 0, top: 0, behavior: "smooth" });
+      selectNode(0);
+    });
+
+    if (graphNodes.length) selectNode(0);
+  </script>
+</body>
+</html>

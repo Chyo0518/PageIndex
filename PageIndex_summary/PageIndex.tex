@@ -1,0 +1,185 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{tabularx}
+\usepackage{listings}
+\usepackage{tcolorbox}
+
+\tcbuselibrary{skins}
+\geometry{margin=1in}
+
+\titleformat{\section}{\large\bfseries\color{blue!70!black}}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries\color{blue!50!black}}{}{0em}{}
+\newcommand{\fieldname}[1]{\textcolor{red!70!black}{\texttt{#1}}}
+\newcommand{\notesquare}{\textcolor{gray!70!black}{\rule{0.45em}{0.45em}}}
+\newcommand{\jsonkey}[1]{\textcolor{blue!70!black}{\texttt{#1}}}
+\newcommand{\jsonstring}[1]{\textcolor{green!45!black}{\texttt{#1}}}
+\newcommand{\jsonnumber}[1]{\textcolor{orange!85!black}{\texttt{#1}}}
+\newcommand{\jsoncolon}{\textcolor{red!70!black}{\texttt{:}}}
+
+\lstset{
+  backgroundcolor=\color{gray!10},
+  frame=none,
+  xleftmargin=1em,
+  xrightmargin=1em,
+  aboveskip=0.2em,
+  belowskip=0em,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  breaklines=true,
+  breakatwhitespace=true
+}
+
+\lstdefinestyle{pageindexjson}{
+  numbers=none,
+  linewidth=\textwidth,
+  xleftmargin=-\leftmargini,
+  xrightmargin=0em,
+  basicstyle=\ttfamily\footnotesize\color{gray!80!black},
+  escapeinside={(*@}{@*)}
+}
+
+\begin{document}
+
+\section{Motivation}
+\begin{itemize}
+    \item Query and knowledge space mismatch
+    \begin{itemize}
+        \item Vector retrieval assumes that the most semantically similar text to the query is also the most relevant. Which is not always true.
+    \end{itemize}
+    \item Hard chunking breaks semantic and contextual integrity.
+    \item Hard to deal with in-document reference
+    \begin{itemize}
+        \item Like “see Appendix G” or “refer to Table 5.3”.
+        \item Since these references don’t share semantic similarity with the referenced content, traditional RAG misses them unless additional preprocessing.
+    \end{itemize}
+\end{itemize}
+
+\section{General Flow}
+\begin{enumerate}
+    \item \textbf{Read the Table of Contents (ToC)}
+    \item \textbf{Select a Section}
+    \item \textbf{Extract Relevant Information}
+    \item \textbf{Is the Information Sufficient?}
+    \begin{itemize}
+        \item \textbf{Yes} $\rightarrow$ Process to \textbf{Answer the Question}
+        \item \textbf{No} $\rightarrow$ Return to \textbf{Step 1} and repeat the loop with another section.
+    \end{itemize} 
+    \item \textbf{Answer the Question}
+\end{enumerate}
+
+\begin{center}
+    \includegraphics[width=0.8\textwidth]{Image/pageindex_loop.jpg}
+\end{center}
+
+\newpage
+\section{1. "Table of Contents (ToC)" Index for LLMs}
+
+\begin{itemize}
+    \item Use \textbf{JSON-based hierarchical structure} to represent \textbf{ToC}
+    \item \textbf{ToC} acts as an \textbf{index tree}, organizes content into hierarchical
+    \item \textbf{Nodes} represent a logical section (e.g. chapter, paragraph, page)
+\begin{lstlisting}[
+    language=Java,
+    numbers=none,
+    breaklines=false,
+    linewidth=\textwidth,
+    xleftmargin=-\leftmargini,
+    xrightmargin=0em,
+    morekeywords={Node,string,object},
+    keywordstyle=\color{gray!70!black},
+    morekeywords={[2]node_id,title,description,metadata,sub_nodes},
+    keywordstyle={[2]\color{blue}},
+    commentstyle=\color{gray!70!black}\itshape,
+    basicstyle=\ttfamily\normalsize\color{gray!70!black},
+    literate={:}{{\textcolor{red}{:}}}{1}
+]
+Node {
+  node_id: string,        // Unique node identifier
+  title: string,           // Human-readable label or title
+  description: string,    // Optional detailed explanation of the node
+  metadata: object,       // Arbitrary key-value pairs for context or attributes
+  sub_nodes: [Node]       // Array of child nodes (recursive structure)
+}
+\end{lstlisting} 
+    \begin{itemize}[label=\notesquare]
+        \item \fieldname{node\_id}: Serves as a reference key to locate the corresponding raw data.
+        \item \fieldname{sub\_nodes}: Field allows recursive nesting, forming a full ToC tree.
+        \item \fieldname{metadata}: Field can store semantic information (e.g. document type, author, timestamp, or relevance scores.)
+    \end{itemize}
+    
+    \item \textbf{\large ToC Example:}
+    \begin{lstlisting}[style=pageindexjson,basicstyle=\ttfamily\normalsize\color{gray!80!black}]
+...
+{
+  (*@\jsonkey{"node\_id"}@*)(*@\jsoncolon@*) (*@\jsonstring{"0006"}@*),
+  (*@\jsonkey{"title"}@*)(*@\jsoncolon@*) (*@\jsonstring{"Financial Stability"}@*),
+  (*@\jsonkey{"start\_index"}@*)(*@\jsoncolon@*) (*@\jsonnumber{21}@*),
+  (*@\jsonkey{"end\_index"}@*)(*@\jsoncolon@*) (*@\jsonnumber{22}@*),
+  (*@\jsonkey{"summary"}@*)(*@\jsoncolon@*) (*@\jsonstring{"The Federal Reserve ..."}@*),
+  (*@\jsonkey{"sub\_nodes"}@*)(*@\jsoncolon@*) [
+    {
+      (*@\jsonkey{"node\_id"}@*)(*@\jsoncolon@*) (*@\jsonstring{"0007"}@*),
+      (*@\jsonkey{"title"}@*)(*@\jsoncolon@*) (*@\jsonstring{"Monitoring Financial Vulnerabilities"}@*),
+      (*@\jsonkey{"start\_index"}@*)(*@\jsoncolon@*) (*@\jsonnumber{22}@*),
+      (*@\jsonkey{"end\_index"}@*)(*@\jsoncolon@*) (*@\jsonnumber{28}@*),
+      (*@\jsonkey{"summary"}@*)(*@\jsoncolon@*) (*@\jsonstring{"The Federal Reserve's monitoring ..."}@*)
+    },
+    {
+      (*@\jsonkey{"node\_id"}@*)(*@\jsoncolon@*) (*@\jsonstring{"0008"}@*),
+      (*@\jsonkey{"title"}@*)(*@\jsoncolon@*) (*@\jsonstring{"Domestic and International Cooperation and Coordination"}@*),
+      (*@\jsonkey{"start\_index"}@*)(*@\jsoncolon@*) (*@\jsonnumber{28}@*),
+      (*@\jsonkey{"end\_index"}@*)(*@\jsoncolon@*) (*@\jsonnumber{31}@*),
+      (*@\jsonkey{"summary"}@*)(*@\jsoncolon@*) (*@\jsonstring{"In 2023, the Federal Reserve collaborated ..."}@*)
+    }
+  ]
+}
+...
+\end{lstlisting}
+\begin{itemize}[label=\notesquare]
+    \item \fieldname{start\_index / end\_index}: Start page / End page
+    \item \fieldname{summary}: Summary of indicated pages
+    \item Each node in ToC liks to corresponding \textbf{raw content} (e.g. text, images, tables)
+    \begin{lstlisting}[
+    language=Java,
+    numbers=none,
+    breaklines=false,
+    linewidth=\textwidth,
+    xleftmargin=-\leftmargini,
+    xrightmargin=0em,
+    morekeywords={Node,string,object},
+    keywordstyle=\color{gray!70!black},
+    morekeywords={[2]node_id,title,description,metadata,sub_nodes},
+    keywordstyle={[2]\color{blue}},
+    commentstyle=\color{gray!70!black}\itshape,
+    basicstyle=\ttfamily\normalsize\color{gray!70!black},
+    literate={:}{{\textcolor{red}{:}}}{1}
+    mathescape=true,                    
+    literate={->}{$\rightarrow$}{2}     
+]
+    node_id -> node_content (raw content, extracted text, images, etc.)
+\end{lstlisting} 
+\end{itemize}
+    \begin{itemize} 
+        \item This mapping enables the LLM to \textbf{select and retrieve} specific nodes as needed.
+        \item \textbf{JSON-based ToC index} resides within the LLM's active reasoning context. 
+    \end{itemize}
+\end{itemize}
+
+
+
+
+
+
+
+
+
+
+\end{document}
