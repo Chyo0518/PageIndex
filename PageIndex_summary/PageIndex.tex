@@ -58,34 +58,52 @@
     \item Hard to deal with in-document reference
     \begin{itemize}
         \item Like “see Appendix G” or “refer to Table 5.3”.
-        \item Since these references don’t share semantic similarity with the referenced content, traditional RAG misses them unless additional preprocessing.
+        \item Since these references don't share semantic similarity with the referenced content, traditional RAG misses them unless additional preprocessing.
     \end{itemize}
 \end{itemize}
 
-\section{General Flow}
-\begin{enumerate}
-    \item \textbf{Read the Table of Contents (ToC)}
-    \item \textbf{Select a Section}
-    \item \textbf{Extract Relevant Information}
-    \item \textbf{Is the Information Sufficient?}
+\section{Indexing Flow}
+\begin{itemize}
+    \item There are \textbf{two retrieval levels}.
     \begin{itemize}
-        \item \textbf{Yes} $\rightarrow$ Process to \textbf{Answer the Question}
-        \item \textbf{No} $\rightarrow$ Return to \textbf{Step 1} and repeat the loop with another section.
-    \end{itemize} 
-    \item \textbf{Answer the Question}
+        \item \textbf{Document-level index}: One record per document. \\ 
+        ``Which document should I search?''
+        \item \textbf{Document ToC tree}: One PageIndex tree inside each document. \\
+        ``Which section or page inside this document should I search?''
+    \end{itemize}
+\end{itemize}
+
+\noindent\textbf{Preparation:} Upload or register PDFs/documents before building the index.
+
+\begin{enumerate}
+    \item \textbf{Create PageIndex ToC tree for each document}: Break each document into a hierarchical tree with metadata (node titles, summaries, page indexes, and raw content).
+    \item \textbf{Create document-level record}: Store \fieldname{doc\_id}, file name, metadata, title, description. \\ \textbf{Note: }Can be derived from metadata of PageIndex tree. (e.g. root/top-level summaries).
+    \item \textbf{Optional document-search index}: Build SQL metadata search, vector search, or LLM-generated document descriptions for multi-document retrieval.
 \end{enumerate}
 
-\begin{center}
-    \includegraphics[width=0.8\textwidth]{Image/pageindex_loop.jpg}
-\end{center}
+\begin{itemize}
+    \item If the document collection is small, it is usually better to create the \textbf{PageIndex ToC tree first}, then derive the document-level description from that tree.
+    \item If the collection is very large, a cheaper document-level pre-filter can be built first, and full ToC trees can be generated only for likely useful documents.
+\end{itemize}
+
+\section{Production Query Flow}
+\begin{enumerate}
+    \item \textbf{Document search}: Use the document-level index to select relevant \fieldname{doc\_id} values.
+    \item \textbf{Tree search}: For each selected document, read its PageIndex ToC tree and select relevant \fieldname{node\_id} values.
+    \item \textbf{Retrieve raw content}: Use \fieldname{node\_map} to load node text, page images, tables, or other raw evidence.
+    \item \textbf{Answer the question}: Return a grounded answer with cited pages, nodes, or documents.
+\end{enumerate}
 
 \newpage
-\section{1. "Table of Contents (ToC)" Index for LLMs}
+\section{Indexing Step 1: Create PageIndex Tree for Each Document Using LLM }
+\begin{itemize}
+    \item \textbf{Input}: Document
+    \item \textbf{Output}: \textbf{JSON-based hierarchical structure} that represents \textbf{ToC}
+    \item \textbf{LLM role}: The LLM can be used to identify section boundaries, generate titles, write summaries, and decide how detailed the tree should be.
+\end{itemize}
 
 \begin{itemize}
-    \item Use \textbf{JSON-based hierarchical structure} to represent \textbf{ToC}
-    \item \textbf{ToC} acts as an \textbf{index tree}, organizes content into hierarchical
-    \item \textbf{Nodes} represent a logical section (e.g. chapter, paragraph, page)
+    \item \textbf{Nodes} represent a section (e.g. chapter, paragraph, page)
 \begin{lstlisting}[
     language=Java,
     numbers=none,
@@ -145,8 +163,7 @@ Node {
 \end{lstlisting}
 \begin{itemize}[label=\notesquare]
     \item \fieldname{start\_index / end\_index}: Start page / End page
-    \item \fieldname{summary}: Summary of indicated pages
-    \item Each node in ToC liks to corresponding \textbf{raw content} (e.g. text, images, tables)
+    \item Each node in ToC links to corresponding \textbf{raw content} (e.g. text, images, tables)
     \begin{lstlisting}[
     language=Java,
     numbers=none,
@@ -160,7 +177,7 @@ Node {
     keywordstyle={[2]\color{blue}},
     commentstyle=\color{gray!70!black}\itshape,
     basicstyle=\ttfamily\normalsize\color{gray!70!black},
-    literate={:}{{\textcolor{red}{:}}}{1}
+    literate={:}{{\textcolor{red}{:}}}{1},
     mathescape=true,                    
     literate={->}{$\rightarrow$}{2}     
 ]
@@ -174,12 +191,187 @@ Node {
 \end{itemize}
 
 
+\section{Indexing Step 2: Create Documents Record Using LLM (Can be Same LLM)}
+
+The document-level record answers: ``Which document should answer the query?'' This record should be small, stable, and easy to filter.
+
+\begin{itemize}
+    \item \textbf{Main fields}: \fieldname{doc\_id}, file name, title, source path, document type, author, date, language, and access permission.
+    \item \textbf{Description}: A short document-level summary used for document search.
+    \begin{itemize}
+        \item Create the PageIndex ToC tree first, then derive the document-level description from the top-level node summaries / metadata of PageIndex ToC tree.
+    \end{itemize}
+    \item \textbf{Storage pointer}: The record should point to where the full ToC tree, raw text, page images, or original PDF are stored.
+\end{itemize}
+
+\noindent\textbf{\large Document-Level Record Example:}
+\begin{lstlisting}[style=pageindexjson,breaklines=false,basicstyle=\ttfamily\normalsize\color{gray!80!black}]
+{
+  (*@\jsonkey{"doc\_id"}@*)(*@\jsoncolon@*) (*@\jsonstring{"fed\_annual\_2023"}@*),
+  (*@\jsonkey{"file\_name"}@*)(*@\jsoncolon@*) (*@\jsonstring{"annual-report-2023.pdf"}@*),
+  (*@\jsonkey{"title"}@*)(*@\jsoncolon@*) (*@\jsonstring{"Federal Reserve Annual Report 2023"}@*),
+  (*@\jsonkey{"description"}@*)(*@\jsoncolon@*) (*@\jsonstring{"Annual report for document-level search."}@*),
+  (*@\jsonkey{"metadata"}@*)(*@\jsoncolon@*) {
+    (*@\jsonkey{"source"}@*)(*@\jsoncolon@*) (*@\jsonstring{"Federal Reserve"}@*),
+    (*@\jsonkey{"year"}@*)(*@\jsoncolon@*) (*@\jsonnumber{2023}@*),
+    (*@\jsonkey{"document\_type"}@*)(*@\jsoncolon@*) (*@\jsonstring{"annual\_report"}@*),
+    (*@\jsonkey{"language"}@*)(*@\jsoncolon@*) (*@\jsonstring{"en"}@*)
+  },
+  (*@\jsonkey{"toc\_tree\_uri"}@*)(*@\jsoncolon@*) (*@\jsonstring{"storage/trees/fed\_annual\_2023.json"}@*),
+  (*@\jsonkey{"raw\_file\_uri"}@*)(*@\jsoncolon@*) (*@\jsonstring{"storage/files/annual-report-2023.pdf"}@*)
+}
+\end{lstlisting}
+
+\begin{lstlisting}[
+    numbers=none,
+    breaklines=false,
+    linewidth=\textwidth,
+    xleftmargin=-\leftmargini,
+    xrightmargin=0em,
+    basicstyle=\ttfamily\normalsize\color{gray!70!black},
+    mathescape=true,
+    literate={->}{$\rightarrow$}{2}
+]
+doc_id -> document record -> ToC tree / node_map / raw files
+\end{lstlisting}
+
+\section{Indexing Step 3: Build Optional Document-Search Index}
+
+This step is needed when the system has many documents. It helps choose which documents should be searched before running tree search inside them.
+
+\begin{itemize}
+    \item \textbf{SQL metadata search}: Good for exact filters such as year, source, company, document type, or permission.
+    \item \textbf{Vector search}: Good for semantic matching against document descriptions, titles, abstracts, or top-level summaries.
+\end{itemize}
+
+\section{Query Step 1: Document Search (Can be same LLM)}
+
+It uses the document-level index and returns candidate \fieldname{doc\_id} values.
+
+\begin{itemize}
+    \item \textbf{Input}: User question, optional filters, and conversation context if needed.
+    \item \textbf{Output}: A ranked list of candidate documents.
+\end{itemize}
+
+\section{Query Step 2: Tree Search (Can be same LLM)}
+
+The LLM reads the PageIndex ToC tree for each selected document, usually without the full raw document text, and selects relevant \fieldname{node\_id} values.
+
+\begin{itemize}
+    \item \textbf{Input}: User question, selected \fieldname{doc\_id}, and that document's ToC tree.
+    \item \textbf{Output}: Relevant \fieldname{node\_id} values, often with short reasons.
+\end{itemize}
+
+\section{Query Step 3: Retrieve Raw Content}
+
+After tree search selects nodes, the system uses \fieldname{node\_map} to fetch the real evidence.
+
+\section{Query Step 4: Answer the Question (C)}
+
+\begin{itemize}
+    \item \textbf{Input}: User question, retrieved evidence, page numbers, \fieldname{doc\_id}, and \fieldname{node\_id}.
+    \item \textbf{Output}: A grounded answer with citations to pages, nodes, or documents.
+\end{itemize}
 
 
+\section{Different Methods}
 
+\subsection{Document Search vs. Tree Search}
 
+In a multi-document system, retrieval is usually split into two levels.
 
+\begin{itemize}
+    \item \textbf{Document search}: Find the relevant document records. The output is one or more \fieldname{doc\_id} values.
+    \item \textbf{Tree search}: Search inside each selected document's PageIndex ToC tree. The output is one or more \fieldname{node\_id} values.
+\end{itemize}
 
+\begin{lstlisting}[
+    numbers=none,
+    breaklines=false,
+    linewidth=\textwidth,
+    xleftmargin=-\leftmargini,
+    xrightmargin=0em,
+    basicstyle=\ttfamily\normalsize\color{gray!70!black},
+    mathescape=true,
+    literate={->}{$\rightarrow$}{2}
+]
+query -> doc-search -> doc_id -> tree-search -> node_id -> raw content -> answer
+\end{lstlisting}
 
+\begin{itemize}
+    \item \textbf{Document search tutorial} (\texttt{doc-search}): Shows how to choose documents using metadata, semantics, or LLM-generated descriptions.
+    \item \textbf{Tree search tutorial} (\texttt{tree-search}): Shows how to choose relevant nodes inside one known document.
+\end{itemize}
+
+\subsection{Manual Text RAG: \texttt{demo/PageIndex\_Simple}}
+
+This demo starts at the \textbf{tree-search} level because the document is already known.
+
+\begin{enumerate}
+    \item \textbf{Convert PDF to Tree(ToC)}: PageIndex creates node titles, summaries, page indexes, raw text, and node ids.
+    \item \textbf{Tree search}: Give the LLM the question and the tree without raw text. The LLM returns relevant \fieldname{node\_id} values.
+    \item \textbf{Map nodes to content}: Use \fieldname{node\_map} to locate the full content for each selected id.
+    \item \textbf{Generate answer}: Feed only the selected node text to the LLM to answer.
+\end{enumerate}
+
+\noindent\textbf{Production note:} For many documents, add a document-search step before this flow.
+
+\subsection{Vision RAG: \texttt{demo/Vision\_PageIndex}}
+
+This demo also starts from one known document, but the final answer is generated from rendered page images.
+
+\begin{enumerate}
+    \item \textbf{Convert PDF to Tree(ToC)}: PageIndex creates node titles, summaries, page indexes, raw text, and node ids.
+    \item \textbf{Render pages}: Convert PDF pages into image files.
+    \item \textbf{Tree search}: Use a multimodal model as a text-only model to select nodes from the tree.
+    \item \textbf{Collect page images}: Convert selected nodes into page ranges and get page images.
+    \item \textbf{Generate visual answer}: Send the question and selected page images to a vision-language model.
+\end{enumerate}
+
+\noindent\textbf{Production note:} Use this when figures, tables, scanned pages, or visual layout are important.
+
+\subsection{Chat Quickstart: \texttt{demo/Chat\_Quickstart\_PageIndex}}
+
+This demo hides the tree-search and answer-generation details behind the PageIndex chat API.
+
+\begin{enumerate}
+    \item \textbf{Submit document}: Upload a PDF and keep the returned \fieldname{doc\_id}.
+    \item \textbf{Check status}: Wait until PageIndex finishes processing.
+    \item \textbf{Ask question}: Call \texttt{pi\_client.chat\_completions(...)} with the user question and \fieldname{doc\_id}.
+    \item \textbf{Stream answer}: PageIndex handles retrieval and answer generation internally.
+\end{enumerate}
+
+\subsection{Agentic Retrieval: \texttt{demo/Agentic\_PageIndex}}
+
+Agentic retrieval is not just ``LLM retrieves then LLM answers.'' Normal PageIndex can also do that. The difference is that retrieval becomes a \textbf{tool} inside a larger agent workflow.
+
+\begin{enumerate}
+    \item \textbf{Submit document}: Upload a PDF and keep \fieldname{doc\_id}.
+    \item \textbf{Ask retrieval prompt}: Request raw relevant evidence in a structured JSON format.
+    \item \textbf{Parse JSON}: Extract page numbers and evidence content from the model output.
+    \item \textbf{Check / reuse evidence}: An agent can validate, compare, call more tools, retrieve again, or pass evidence to another step.
+    \item \textbf{Generate final response if needed}: The final answer may be produced after the evidence is collected.
+\end{enumerate}
+
+\noindent\textbf{Key distinction:}
+\begin{itemize}
+    \item \textbf{Normal PageIndex}: Retrieval is a step inside a fixed QA pipeline.
+    \item \textbf{Agentic PageIndex}: Retrieval is an iterative tool that an agent can call conditionally.
+\end{itemize}
+
+\subsection{Comparison}
+
+\begin{tabularx}{\textwidth}{@{}p{0.22\textwidth}p{0.30\textwidth}p{0.38\textwidth}@{}}
+\toprule
+\textbf{Method} & \textbf{Main Role} & \textbf{Flow Summary} \\
+\midrule
+Document Search & Select document(s) & Query $\rightarrow$ document index $\rightarrow$ \fieldname{doc\_id} \\
+Tree Search & Select section(s) & \fieldname{doc\_id} $\rightarrow$ ToC tree $\rightarrow$ \fieldname{node\_id} \\
+Manual Text RAG & Custom text QA & Tree $\rightarrow$ node ids $\rightarrow$ node text $\rightarrow$ answer \\
+Vision RAG & Visual document QA & Tree $\rightarrow$ node ids $\rightarrow$ page images $\rightarrow$ VLM answer \\
+Chat Quickstart & Simple hosted QA & Document id $\rightarrow$ PageIndex chat API $\rightarrow$ streamed answer \\
+Agentic Retrieval & Structured evidence tool & Query $\rightarrow$ retrieval prompt $\rightarrow$ JSON evidence $\rightarrow$ agent use \\
+\bottomrule
+\end{tabularx}
 
 \end{document}
