@@ -46,53 +46,52 @@
   escapeinside={(*@}{@*)}
 }
 
+\lstdefinestyle{pageTextBlock}{
+  numbers=none,
+  breaklines=true,
+  linewidth=\textwidth,
+  xleftmargin=-\leftmargini,
+  xrightmargin=0em,
+  basicstyle=\ttfamily\footnotesize\color{gray!80!black}
+}
+
 \begin{document}
 
-\section{Motivation}
-\begin{itemize}
-    \item Query and knowledge space mismatch
-    \begin{itemize}
-        \item Vector retrieval assumes that the most semantically similar text to the query is also the most relevant. Which is not always true.
-    \end{itemize}
-    \item Hard chunking breaks semantic and contextual integrity.
-    \item Hard to deal with in-document reference
-    \begin{itemize}
-        \item Like “see Appendix G” or “refer to Table 5.3”.
-        \item Since these references don't share semantic similarity with the referenced content, traditional RAG misses them unless additional preprocessing.
-    \end{itemize}
-\end{itemize}
+\section{PageIndex Implementation Flow}
 
-\section{Indexing Flow}
-\begin{itemize}
-    \item There are \textbf{two retrieval levels}.
-    \begin{itemize}
-        \item \textbf{Document-level index}: One record per document. \\ 
-        ``Which document should I search?''
-        \item \textbf{Document ToC tree}: One PageIndex tree inside each document. \\
-        ``Which section or page inside this document should I search?''
-    \end{itemize}
-\end{itemize}
 
-\noindent\textbf{Preparation:} Upload or register PDFs/documents before building the index.
+\begin{lstlisting}[
+    numbers=none,
+    breaklines=true,
+    linewidth=\textwidth,
+    xleftmargin=-\leftmargini,
+    xrightmargin=0em,
+    basicstyle=\ttfamily\footnotesize\color{gray!70!black},
+    mathescape=true,
+    literate={->}{$\rightarrow$}{2}
+]
+document -> page text -> ToC detection -> tree construction -> index verification -> retrieval-ready document record
+\end{lstlisting}
 
 \begin{enumerate}
-    \item \textbf{Create PageIndex ToC tree for each document}: Break each document into a hierarchical tree with metadata (node titles, summaries, page indexes, and raw content).
-    \item \textbf{Create document-level record}: Store \fieldname{doc\_id}, file name, metadata, title, description. \\ \textbf{Note: }Can be derived from metadata of PageIndex tree. (e.g. root/top-level summaries).
-    \item \textbf{Optional document-search index}: Build SQL metadata search, vector search, or LLM-generated document descriptions for multi-document retrieval.
+    \item \textbf{Parse pages}: Extract plain text from the pdf.
+    \item \textbf{Detect existing ToC}: Decide whether the document already contain a ToC.
+    \item \textbf{Choose tree-building path}: 
+    \begin{itemize}
+        \item \textbf{ToC w/ page numbers}: Converts to \textbf{JSON} with page numbers. 
+        \item \textbf{ToC w/o page numbers}: LLM identifies where each section starts.
+        \item \textbf{If no ToC exists}: LLM infers the hierarchy directly from page-marked text.
+    \end{itemize}   
+    \item \textbf{Group pages}: Long documents are split into token-safe groups before prompting. This keeps each LLM call within context limits and avoids forcing the model to read the whole document at once.
+    \item \textbf{Verify and repair indexes}: Generated section boundaries are checked against the document text. If a section appears to start on the wrong page, the system searches nearby pages and asks the LLM to repair the boundary.
+    \item \textbf{Convert section list to tree}: The cleaned section list is converted into a recursive hierarchy. Each node receives a \fieldname{start\_index}, an \fieldname{end\_index}, and child nodes when the section contains smaller sections.
+    \item \textbf{Split large nodes}: Sections that are too large are processed again at a finer level, creating deeper subtrees only where the document needs more detail.
+    \item \textbf{Add retrieval fields}: The final tree can include \fieldname{node\_id}, raw \fieldname{text}, node \fieldname{summary}, and a document-level description depending on the indexing settings.
+    \item \textbf{Store retrieval-ready data}: The system stores the document record, tree, page count, extracted page text, and optional descriptions so later retrieval can return either the compact tree or the raw evidence.
+    \item \textbf{Support query-time retrieval}: At query time, the system can expose document metadata, a tree without raw text, and selected raw page evidence for answer generation.
 \end{enumerate}
 
-\begin{itemize}
-    \item If the document collection is small, it is usually better to create the \textbf{PageIndex ToC tree first}, then derive the document-level description from that tree.
-    \item If the collection is very large, a cheaper document-level pre-filter can be built first, and full ToC trees can be generated only for likely useful documents.
-\end{itemize}
-
-\section{Production Query Flow}
-\begin{enumerate}
-    \item \textbf{Document search}: Use the document-level index to select relevant \fieldname{doc\_id} values.
-    \item \textbf{Tree search}: For each selected document, read its PageIndex ToC tree and select relevant \fieldname{node\_id} values.
-    \item \textbf{Retrieve raw content}: Use \fieldname{node\_map} to load node text, page images, tables, or other raw evidence.
-    \item \textbf{Answer the question}: Return a grounded answer with cited pages, nodes, or documents.
-\end{enumerate}
+\noindent\textbf{LLM usage note:} These steps can use the same model, but they are separate LLM calls. The pipeline passes explicit data between steps, such as extracted page text, ToC JSON, selected \fieldname{doc\_id}, selected \fieldname{node\_id}, and retrieved evidence. It does not rely on one shared hidden chat history.
 
 \newpage
 \section{Indexing Step 1: Create PageIndex Tree for Each Document Using LLM }
@@ -101,6 +100,84 @@
     \item \textbf{Output}: \textbf{JSON-based hierarchical structure} that represents \textbf{ToC}
     \item \textbf{LLM role}: The LLM can be used to identify section boundaries, generate titles, write summaries, and decide how detailed the tree should be.
 \end{itemize}
+
+\noindent\textbf{Implementation detail:}
+\begin{enumerate}
+    \item \textbf{Extract page text}: Extract ordered page-level text from document.
+    \begin{itemize}
+        \item The actual extraction output is a list of \texttt{(page\_text, token\_count)} pairs.
+        \item The physical page index is implied by the list position: the first pair is page 1, the second pair is page 2, etc.
+
+    \begin{lstlisting}[style=pageTextBlock]
+[
+  ("Annual Report 2023 ...", 742),
+  ("Financial Stability ...", 691)
+]
+\end{lstlisting}
+        \item Before the LLM receives the page text, the ordered pages are wrapped with physical page tags:
+  
+\begin{lstlisting}[style=pageTextBlock]
+<physical_index_1>
+Annual Report 2023 ...
+<physical_index_1>
+
+<physical_index_2>
+Financial Stability ...
+<physical_index_2>
+\end{lstlisting}
+
+\end{itemize} 
+
+    \item \textbf{Detect existing ToC using LLM}: 
+    \begin{itemize}
+        \item Using LLM to label whether each page is a ToC. Since existing structure usually reflects hierarchy structure.
+\begin{lstlisting}[style=pageTextBlock]
+toc_page_list = [1, 2]
+\end{lstlisting}
+        \item Page-check behavior:
+        
+        \begin{tabularx}{\linewidth}{@{}p{0.30\linewidth}X@{}}
+        \toprule
+        \textbf{Situation} & \textbf{Pages checked} \\
+        \midrule
+        \textbf{No ToC found} & Up to \textbf{\textasciitilde20 pages} (PDF pages 1--20), then stop \\
+        \textbf{ToC found early} & Only until the ToC block ends (could be 3 pages, could be 8) \\
+        \textbf{ToC spans 20 pages} & \textbf{More than 20} -- keeps going while still inside the ToC block \\
+        \bottomrule
+        \end{tabularx}
+        
+\end{itemize} 
+
+    \item \textbf{Detect existing ToC using LLM}: 
+        \item Concatenate those pages' text and feed to LLM to detect whether page numbers are given for sections in the ToC.
+        \begin{lstlisting}[style=pageTextBlock]
+Example input to that one call:
+
+Contents
+1. Introduction .............. 3
+2. Monetary Policy ........... 9
+3. Financial Stability ...... 21
+
+-> page_index_given_in_toc: "yes"
+
+vs.
+
+Contents
+1. Introduction
+2. Monetary Policy
+3. Financial Stability
+
+-> page_index_given_in_toc: "no"
+\end{lstlisting}
+    
+        
+    \item \textbf{Build the first tree}: If a ToC exists, the system normalizes it into JSON and aligns its section pages to physical pages. If no ToC exists, the LLM reads page-marked text and proposes section titles, hierarchy, and start pages.
+    \item \textbf{Handle long documents}: The document can be divided into token-safe groups. The LLM reads one group at a time and returns partial structure, then the system merges the partial structure into one document tree.
+    \item \textbf{Verify page boundaries}: Section titles and start pages are checked against the extracted text. When a boundary is wrong, the system searches nearby pages and repairs the index.
+    \item \textbf{Create recursive nodes}: The final structure is converted into nested nodes. Parent nodes cover broad sections; child nodes cover more specific subsections.
+    \item \textbf{Control detail level}: The tree becomes deeper when a section is too long or too dense. Short sections can remain as leaf nodes to avoid unnecessary complexity.
+    \item \textbf{Attach retrieval fields}: Each node receives a stable \fieldname{node\_id}, page range, optional summary, and optional raw text pointer.
+\end{enumerate}
 
 \begin{itemize}
     \item \textbf{Nodes} represent a section (e.g. chapter, paragraph, page)
@@ -199,10 +276,21 @@ The document-level record answers: ``Which document should answer the query?'' T
     \item \textbf{Main fields}: \fieldname{doc\_id}, file name, title, source path, document type, author, date, language, and access permission.
     \item \textbf{Description}: A short document-level summary used for document search.
     \begin{itemize}
-        \item Create the PageIndex ToC tree first, then derive the document-level description from the top-level node summaries / metadata of PageIndex ToC tree.
+        \item For a small collection, create the PageIndex ToC tree first, then derive the document-level description from the root summary, top-level node summaries, and metadata.
+        \item For a large collection, create a cheaper document-level record first using metadata, filename, abstract, title page, or a short extracted preview. Generate full PageIndex trees only for documents that are likely to be searched.
     \end{itemize}
     \item \textbf{Storage pointer}: The record should point to where the full ToC tree, raw text, page images, or original PDF are stored.
 \end{itemize}
+
+\noindent\textbf{Implementation detail:}
+\begin{enumerate}
+    \item \textbf{Create a stable document id}: Each document receives an id that can be used throughout the whole pipeline. Query-time retrieval returns this id before searching inside the document tree.
+    \item \textbf{Collect basic metadata}: The record stores stable facts such as file name, title, source, year, type, language, and permission. These fields are useful for filtering and access control.
+    \item \textbf{Generate or derive a description}: The description is a short document-level summary. It can be written by the LLM from the root and top-level tree summaries, or from a short preview when the full tree has not been created yet.
+    \item \textbf{Store pointers}: The record keeps locations for the original file, tree, extracted text, page images, or other raw evidence. The record itself stays small while pointing to larger stored objects.
+    \item \textbf{Separate document record from tree}: The document record is used to decide \fieldname{which document} to search. The PageIndex tree is used later to decide \fieldname{which section} inside that document to search.
+    \item \textbf{Keep the record updateable}: If the document is re-indexed, the record can keep the same \fieldname{doc\_id} while updating its description, metadata, and storage pointers.
+\end{enumerate}
 
 \noindent\textbf{\large Document-Level Record Example:}
 \begin{lstlisting}[style=pageindexjson,breaklines=false,basicstyle=\ttfamily\normalsize\color{gray!80!black}]
@@ -243,6 +331,17 @@ This step is needed when the system has many documents. It helps choose which do
     \item \textbf{SQL metadata search}: Good for exact filters such as year, source, company, document type, or permission.
     \item \textbf{Vector search}: Good for semantic matching against document descriptions, titles, abstracts, or top-level summaries.
 \end{itemize}
+
+\noindent\textbf{Implementation detail:}
+\begin{enumerate}
+    \item \textbf{Choose searchable fields}: The index can use title, description, metadata, abstract, root summary, and top-level section summaries. Raw full-document text is usually too large for document-level search.
+    \item \textbf{Build metadata filters}: Structured fields are stored in a database so the system can apply exact filters before semantic search. Examples include year, source, language, document type, and permission.
+    \item \textbf{Build semantic search}: Document descriptions and high-level summaries can be embedded into vectors. The user query is embedded at query time and matched against these document vectors.
+    \item \textbf{Combine retrieval signals}: Production systems often combine metadata filters, keyword search, vector similarity, and optional LLM reranking. This reduces the number of documents passed into tree search.
+    \item \textbf{Return candidate documents}: The output is a small ranked set of \fieldname{doc\_id} values. Tree search then runs only inside those selected documents.
+    \item \textbf{Handle scale}: For small collections, this step can be simple or skipped. For large collections, it is important because generating and searching every full tree for every query is expensive.
+    \item \textbf{Keep the index synchronized}: When documents are added, deleted, or re-indexed, the document-search index should update together with the document records.
+\end{enumerate}
 
 \section{Query Step 1: Document Search (Can be same LLM)}
 

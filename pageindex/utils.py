@@ -1,3 +1,5 @@
+"""Shared utilities for LLM calls, PDF parsing, and document structure processing."""
+
 import litellm
 import logging
 import os
@@ -25,12 +27,14 @@ if not os.getenv("OPENAI_API_KEY") and os.getenv("CHATGPT_API_KEY"):
 litellm.drop_params = True
 
 def count_tokens(text, model=None):
+    """Return the token count for the given text using the specified model."""
     if not text:
         return 0
     return litellm.token_counter(model=model, text=text)
 
 
 def llm_completion(model, prompt, chat_history=None, return_finish_reason=False):
+    """Send a synchronous chat completion request with retries."""
     if model:
         model = model.removeprefix("litellm/")
     max_retries = 10
@@ -61,6 +65,7 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False)
 
 
 async def llm_acompletion(model, prompt):
+    """Send an asynchronous chat completion request with retries."""
     if model:
         model = model.removeprefix("litellm/")
     max_retries = 10
@@ -84,6 +89,7 @@ async def llm_acompletion(model, prompt):
             
             
 def get_json_content(response):
+    """Extract raw JSON text from a markdown code block in a response."""
     start_idx = response.find("```json")
     if start_idx != -1:
         start_idx += 7
@@ -98,6 +104,7 @@ def get_json_content(response):
          
 
 def extract_json(content):
+    """Parse JSON from LLM output, handling fenced blocks and common formatting issues."""
     try:
         # First, try to extract JSON enclosed within ```json and ```
         start_idx = content.find("```json")
@@ -131,6 +138,7 @@ def extract_json(content):
         return {}
 
 def write_node_id(data, node_id=0):
+    """Assign zero-padded node_id values recursively to a structure tree."""
     if isinstance(data, dict):
         data['node_id'] = str(node_id).zfill(4)
         node_id += 1
@@ -143,6 +151,7 @@ def write_node_id(data, node_id=0):
     return node_id
 
 def get_nodes(structure):
+    """Flatten a nested structure into a list of node dicts without child lists."""
     if isinstance(structure, dict):
         structure_node = copy.deepcopy(structure)
         structure_node.pop('nodes', None)
@@ -158,6 +167,7 @@ def get_nodes(structure):
         return nodes
     
 def structure_to_list(structure):
+    """Convert a nested structure tree into a flat list including all nodes."""
     if isinstance(structure, dict):
         nodes = []
         nodes.append(structure)
@@ -172,6 +182,7 @@ def structure_to_list(structure):
 
     
 def get_leaf_nodes(structure):
+    """Return all leaf nodes from a nested structure tree."""
     if isinstance(structure, dict):
         if not structure['nodes']:
             structure_node = copy.deepcopy(structure)
@@ -190,8 +201,10 @@ def get_leaf_nodes(structure):
         return leaf_nodes
 
 def is_leaf_node(data, node_id):
+    """Return True if the node with the given node_id has no children."""
     # Helper function to find the node by its node_id
     def find_node(data, node_id):
+        """Recursively locate a node dict by its node_id."""
         if isinstance(data, dict):
             if data.get('node_id') == node_id:
                 return data
@@ -216,10 +229,12 @@ def is_leaf_node(data, node_id):
     return False
 
 def get_last_node(structure):
+    """Return the last item in a structure list."""
     return structure[-1]
 
 
 def extract_text_from_pdf(pdf_path):
+    """Extract concatenated text from all pages of a PDF file."""
     pdf_reader = PyPDF2.PdfReader(pdf_path)
     ###return text not list 
     text=""
@@ -229,12 +244,14 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 def get_pdf_title(pdf_path):
+    """Return the PDF metadata title or 'Untitled' if unavailable."""
     pdf_reader = PyPDF2.PdfReader(pdf_path)
     meta = pdf_reader.metadata
     title = meta.title if meta and meta.title else 'Untitled'
     return title
 
 def get_text_of_pages(pdf_path, start_page, end_page, tag=True):
+    """Extract text from a page range, optionally wrapped in index tags."""
     pdf_reader = PyPDF2.PdfReader(pdf_path)
     text = ""
     for page_num in range(start_page-1, end_page):
@@ -247,6 +264,7 @@ def get_text_of_pages(pdf_path, start_page, end_page, tag=True):
     return text
 
 def get_first_start_page_from_text(text):
+    """Return the first start_index page number found in tagged text."""
     start_page = -1
     start_page_match = re.search(r'<start_index_(\d+)>', text)
     if start_page_match:
@@ -254,6 +272,7 @@ def get_first_start_page_from_text(text):
     return start_page
 
 def get_last_start_page_from_text(text):
+    """Return the last start_index page number found in tagged text."""
     start_page = -1
     # Find all matches of start_index tags
     start_page_matches = re.finditer(r'<start_index_(\d+)>', text)
@@ -265,11 +284,13 @@ def get_last_start_page_from_text(text):
 
 
 def sanitize_filename(filename, replacement='-'):
+    """Replace invalid filename characters (e.g. '/') with a safe substitute."""
     # In Linux, only '/' and '\0' (null) are invalid in filenames.
     # Null can't be represented in strings, so we only handle '/'.
     return filename.replace('/', replacement)
 
 def get_pdf_name(pdf_path):
+    """Return a sanitized PDF name from a file path or BytesIO stream."""
     # Extract PDF name
     if isinstance(pdf_path, str):
         pdf_name = os.path.basename(pdf_path)
@@ -282,7 +303,9 @@ def get_pdf_name(pdf_path):
 
 
 class JsonLogger:
+    """Append-only JSON logger that writes messages to a timestamped log file."""
     def __init__(self, file_path):
+        """Initialize a logger named after the PDF with an empty message list."""
         # Extract PDF name for logger name
         pdf_name = get_pdf_name(file_path)
             
@@ -293,6 +316,7 @@ class JsonLogger:
         self.log_data = []
 
     def log(self, level, message, **kwargs):
+        """Append a message and rewrite the full log file as JSON."""
         if isinstance(message, dict):
             self.log_data.append(message)
         else:
@@ -304,25 +328,31 @@ class JsonLogger:
             json.dump(self.log_data, f, indent=2)
 
     def info(self, message, **kwargs):
+        """Log an info-level message."""
         self.log("INFO", message, **kwargs)
 
     def error(self, message, **kwargs):
+        """Log an error-level message."""
         self.log("ERROR", message, **kwargs)
 
     def debug(self, message, **kwargs):
+        """Log a debug-level message."""
         self.log("DEBUG", message, **kwargs)
 
     def exception(self, message, **kwargs):
+        """Log an error-level message marked as an exception."""
         kwargs["exception"] = True
         self.log("ERROR", message, **kwargs)
 
     def _filepath(self):
+        """Return the full path to the log file under ./logs."""
         return os.path.join("logs", self.filename)
     
 
 
 
 def list_to_tree(data):
+    """Convert a flat list of structure entries into a nested tree by structure codes."""
     def get_parent_structure(structure):
         """Helper function to get the parent structure code"""
         if not structure:
@@ -360,6 +390,7 @@ def list_to_tree(data):
     
     # Helper function to clean empty children arrays
     def clean_node(node):
+        """Remove empty nodes lists recursively from a tree node."""
         if not node['nodes']:
             del node['nodes']
         else:
@@ -371,6 +402,7 @@ def list_to_tree(data):
     return [clean_node(node) for node in root_nodes]
 
 def add_preface_if_needed(data):
+    """Insert a Preface node at the start when content does not begin on page 1."""
     if not isinstance(data, list) or not data:
         return data
 
@@ -386,6 +418,7 @@ def add_preface_if_needed(data):
 
 
 def get_page_tokens(pdf_path, model=None, pdf_parser="PyPDF2"):
+    """Return a list of (page_text, token_count) tuples for each PDF page."""
     if pdf_parser == "PyPDF2":
         pdf_reader = PyPDF2.PdfReader(pdf_path)
         page_list = []
@@ -413,18 +446,21 @@ def get_page_tokens(pdf_path, model=None, pdf_parser="PyPDF2"):
         
 
 def get_text_of_pdf_pages(pdf_pages, start_page, end_page):
+    """Concatenate text from a page range in a pre-parsed pdf_pages list."""
     text = ""
     for page_num in range(start_page-1, end_page):
         text += pdf_pages[page_num][0]
     return text
 
 def get_text_of_pdf_pages_with_labels(pdf_pages, start_page, end_page):
+    """Concatenate page text wrapped in physical_index tags for a page range."""
     text = ""
     for page_num in range(start_page-1, end_page):
         text += f"<physical_index_{page_num+1}>\n{pdf_pages[page_num][0]}\n<physical_index_{page_num+1}>\n"
     return text
 
 def get_number_of_pages(pdf_path):
+    """Return the total page count of a PDF file."""
     pdf_reader = PyPDF2.PdfReader(pdf_path)
     num = len(pdf_reader.pages)
     return num
@@ -432,6 +468,7 @@ def get_number_of_pages(pdf_path):
 
 
 def post_processing(structure, end_physical_index):
+    """Convert physical indices to page ranges and build a nested tree structure."""
     # First convert page_number to start_index in flat list
     for i, item in enumerate(structure):
         item['start_index'] = item.get('physical_index')
@@ -453,6 +490,7 @@ def post_processing(structure, end_physical_index):
         return structure
 
 def clean_structure_post(data):
+    """Remove temporary index fields from a structure tree in place."""
     if isinstance(data, dict):
         data.pop('page_number', None)
         data.pop('start_index', None)
@@ -465,6 +503,7 @@ def clean_structure_post(data):
     return data
 
 def remove_fields(data, fields=['text']):
+    """Recursively remove specified keys from a nested dict or list structure."""
     if isinstance(data, dict):
         return {k: remove_fields(v, fields)
             for k, v in data.items() if k not in fields}
@@ -473,13 +512,16 @@ def remove_fields(data, fields=['text']):
     return data
 
 def print_toc(tree, indent=0):
+    """Print a table-of-contents style view of a structure tree."""
     for node in tree:
         print('  ' * indent + node['title'])
         if node.get('nodes'):
             print_toc(node['nodes'], indent + 1)
 
 def print_json(data, max_len=40, indent=2):
+    """Pretty-print JSON with long strings truncated for readability."""
     def simplify_data(obj):
+        """Truncate long strings in nested data before JSON serialization."""
         if isinstance(obj, dict):
             return {k: simplify_data(v) for k, v in obj.items()}
         elif isinstance(obj, list):
@@ -494,6 +536,7 @@ def print_json(data, max_len=40, indent=2):
 
 
 def remove_structure_text(data):
+    """Recursively remove the text field from all nodes in a structure."""
     if isinstance(data, dict):
         data.pop('text', None)
         if 'nodes' in data:
@@ -505,6 +548,7 @@ def remove_structure_text(data):
 
 
 def check_token_limit(structure, limit=110000):
+    """Print details for nodes whose text exceeds the token limit."""
     list = structure_to_list(structure)
     for node in list:
         num_tokens = count_tokens(node['text'], model=None)
@@ -517,6 +561,7 @@ def check_token_limit(structure, limit=110000):
 
 
 def convert_physical_index_to_int(data):
+    """Parse physical_index strings into integers in a list or single value."""
     if isinstance(data, list):
         for i in range(len(data)):
             # Check if item is a dictionary and has 'physical_index' key
@@ -540,6 +585,7 @@ def convert_physical_index_to_int(data):
 
 
 def convert_page_to_int(data):
+    """Convert string page numbers to integers in a list of dicts."""
     for item in data:
         if 'page' in item and isinstance(item['page'], str):
             try:
@@ -551,6 +597,7 @@ def convert_page_to_int(data):
 
 
 def add_node_text(node, pdf_pages):
+    """Attach concatenated page text to each node from pre-parsed pdf_pages."""
     if isinstance(node, dict):
         start_page = node.get('start_index')
         end_page = node.get('end_index')
@@ -564,6 +611,7 @@ def add_node_text(node, pdf_pages):
 
 
 def add_node_text_with_labels(node, pdf_pages):
+    """Attach labeled page text to each node from pre-parsed pdf_pages."""
     if isinstance(node, dict):
         start_page = node.get('start_index')
         end_page = node.get('end_index')
@@ -577,6 +625,7 @@ def add_node_text_with_labels(node, pdf_pages):
 
 
 async def generate_node_summary(node, model=None):
+    """Generate an LLM summary for a single node's text content."""
     prompt = f"""You are given a part of a document, your task is to generate a description of the partial document about what are main points covered in the partial document.
 
     Partial Document Text: {node['text']}
@@ -588,6 +637,7 @@ async def generate_node_summary(node, model=None):
 
 
 async def generate_summaries_for_structure(structure, model=None):
+    """Generate and attach LLM summaries to every node in a structure."""
     nodes = structure_to_list(structure)
     tasks = [generate_node_summary(node, model=model) for node in nodes]
     summaries = await asyncio.gather(*tasks)
@@ -621,6 +671,7 @@ def create_clean_structure_for_description(structure):
 
 
 def generate_doc_description(structure, model=None):
+    """Generate a one-sentence document description from its structure via LLM."""
     prompt = f"""Your are an expert in generating descriptions for a document.
     You are given a structure of a document. Your task is to generate a one-sentence description for the document, which makes it easy to distinguish the document from other documents.
         
@@ -633,12 +684,14 @@ def generate_doc_description(structure, model=None):
 
 
 def reorder_dict(data, key_order):
+    """Return a dict with keys ordered according to key_order."""
     if not key_order:
         return data
     return {key: data[key] for key in key_order if key in data}
 
 
 def format_structure(structure, order=None):
+    """Recursively reorder node fields and prune empty nodes lists."""
     if not order:
         return structure
     if isinstance(structure, dict):
@@ -653,17 +706,21 @@ def format_structure(structure, order=None):
 
 
 class ConfigLoader:
+    """Load and merge YAML default config with user-provided options."""
     def __init__(self, default_path: str = None):
+        """Initialize the loader with defaults from the given or built-in YAML path."""
         if default_path is None:
             default_path = Path(__file__).parent / "config.yaml"
         self._default_dict = self._load_yaml(default_path)
 
     @staticmethod
     def _load_yaml(path):
+        """Load and return the contents of a YAML config file."""
         with open(path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
 
     def _validate_keys(self, user_dict):
+        """Raise ValueError if user_dict contains keys not in the defaults."""
         unknown_keys = set(user_dict) - set(self._default_dict)
         if unknown_keys:
             raise ValueError(f"Unknown config keys: {unknown_keys}")
@@ -689,6 +746,7 @@ def create_node_mapping(tree):
     """Create a flat dict mapping node_id to node for quick lookup."""
     mapping = {}
     def _traverse(nodes):
+        """Recursively populate mapping with node_id to node entries."""
         for node in nodes:
             if node.get('node_id'):
                 mapping[node['node_id']] = node
@@ -698,6 +756,7 @@ def create_node_mapping(tree):
     return mapping
 
 def print_tree(tree, indent=0):
+    """Print a structure tree with node IDs, titles, and truncated summaries."""
     for node in tree:
         summary = node.get('summary') or node.get('prefix_summary', '')
         summary_str = f"  —  {summary[:60]}..." if summary else ""
@@ -706,6 +765,6 @@ def print_tree(tree, indent=0):
             print_tree(node['nodes'], indent + 1)
 
 def print_wrapped(text, width=100):
+    """Print text with each line wrapped to the given character width."""
     for line in text.splitlines():
         print(textwrap.fill(line, width=width))
-

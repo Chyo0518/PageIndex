@@ -1,10 +1,11 @@
 model: "gpt-4o-2024-11-20"
 # model: "anthropic/claude-sonnet-4-6"
-retrieve_model: "gpt-5.4"  # defaults to `model` if not set
-toc_check_page_num: 20
-max_page_num_each_node: 10
-max_token_num_each_node: 20000
-if_add_node_id: "yes"
-if_add_node_summary: "yes"
-if_add_doc_description: "no"
-if_add_node_text: "no"
+retrieve_model: "gpt-5.4"  # Defaults to `model` if not set
+toc_check_page_num: 20    # How many pages from the start of the document to scan when looking for a table of contents.
+max_page_num_each_node: 10  # Maximum page span before a tree node is considered “large”, if a node is "large" may need subdivision
+max_token_num_each_node: 20000  
+# Ouput enrichment flags
+if_add_node_id: "yes"   # Assign node ID
+if_add_node_summary: "yes"  # Add node summary 
+if_add_doc_description: "no" # Add a one-sentence overview of the entrie document
+if_add_node_text: "no" # Keep the full section text in final tree

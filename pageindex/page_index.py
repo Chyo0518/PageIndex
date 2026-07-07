@@ -1,3 +1,5 @@
+"""Build hierarchical document structure from PDFs via TOC detection and LLM-assisted page indexing."""
+
 import os
 import json
 import copy
@@ -10,7 +12,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 ################### check title in page #########################################################
-async def check_title_appearance(item, page_list, start_index=1, model=None):    
+async def check_title_appearance(item, page_list, start_index=1, model=None):
+    """Check whether a TOC section title appears on its assigned page."""
     title=item['title']
     if 'physical_index' not in item or item['physical_index'] is None:
         return {'list_index': item.get('list_index'), 'answer': 'no', 'title':title, 'page_number': None}
@@ -45,7 +48,8 @@ async def check_title_appearance(item, page_list, start_index=1, model=None):
     return {'list_index': item['list_index'], 'answer': answer, 'title': title, 'page_number': page_number}
 
 
-async def check_title_appearance_in_start(title, page_text, model=None, logger=None):    
+async def check_title_appearance_in_start(title, page_text, model=None, logger=None):
+    """Check whether a section title starts at the beginning of a page."""
     prompt = f"""
     You will be given the current section title and the current page_text.
     Your job is to check if the current section starts in the beginning of the given page_text.
@@ -72,6 +76,7 @@ async def check_title_appearance_in_start(title, page_text, model=None, logger=N
 
 
 async def check_title_appearance_in_start_concurrent(structure, page_list, model=None, logger=None):
+    """Concurrently set appear_start for all structure items with physical_index."""
     if logger:
         logger.info("Checking title appearance in start concurrently")
     
@@ -102,6 +107,7 @@ async def check_title_appearance_in_start_concurrent(structure, page_list, model
 
 
 def toc_detector_single_page(content, model=None):
+    """Detect whether a single page contains a table of contents."""
     prompt = f"""
     Your job is to detect if there is a table of content provided in the given text.
 
@@ -122,6 +128,7 @@ def toc_detector_single_page(content, model=None):
 
 
 def check_if_toc_extraction_is_complete(content, toc, model=None):
+    """Check if extracted TOC covers all main sections in the partial document."""
     prompt = f"""
     You are given a partial document  and a  table of contents.
     Your job is to check if the  table of contents is complete, which it contains all the main sections in the partial document.
@@ -140,6 +147,7 @@ def check_if_toc_extraction_is_complete(content, toc, model=None):
 
 
 def check_if_toc_transformation_is_complete(content, toc, model=None):
+    """Check if cleaned TOC is complete relative to the raw TOC."""
     prompt = f"""
     You are given a raw table of contents and a  table of contents.
     Your job is to check if the  table of contents is complete.
@@ -157,6 +165,7 @@ def check_if_toc_transformation_is_complete(content, toc, model=None):
     return json_content.get('completed', 'no')
 
 def extract_toc_content(content, model=None):
+    """Extract full TOC text from page content, continuing until complete."""
     prompt = f"""
     Your job is to extract the full table of contents from the given text, replace ... with :
 
@@ -191,6 +200,7 @@ def extract_toc_content(content, model=None):
     return response
 
 def detect_page_index(toc_content, model=None):
+    """Detect whether page numbers are present in TOC text."""
     print('start detect_page_index')
     prompt = f"""
     You will be given a table of contents.
@@ -211,7 +221,9 @@ def detect_page_index(toc_content, model=None):
     return json_content.get('page_index_given_in_toc', 'no')
 
 def toc_extractor(page_list, toc_page_list, model):
+    """Extract TOC content from detected TOC pages and detect page indices."""
     def transform_dots_to_colon(text):
+        """Replace dot leaders in TOC text with colons."""
         text = re.sub(r'\.{5,}', ': ', text)
         # Handle dots separated by spaces
         text = re.sub(r'(?:\. ){5,}\.?', ': ', text)
@@ -232,6 +244,7 @@ def toc_extractor(page_list, toc_page_list, model):
 
 
 def toc_index_extractor(toc, content, model=None):
+    """Add physical_index tags to TOC entries using LLM on document pages."""
     print('start toc_index_extractor')
     toc_extractor_prompt = """
     You are given a table of contents in a json format and several pages of a document, your job is to add the physical_index to the table of contents in the json format.
@@ -262,6 +275,7 @@ def toc_index_extractor(toc, content, model=None):
 
 
 def toc_transformer(toc_content, model=None):
+    """Transform raw TOC text into structured JSON with optional page numbers."""
     print('start toc_transformer')
     init_prompt = """
     You are given a table of contents, You job is to transform the whole table of content into a JSON format included table_of_contents.
@@ -328,6 +342,7 @@ def toc_transformer(toc_content, model=None):
 
 
 def find_toc_pages(start_page_index, page_list, opt, logger=None):
+    """Scan pages from start_index to find consecutive TOC pages."""
     print('start find_toc_pages')
     last_page_is_yes = False
     toc_page_list = []
@@ -355,6 +370,7 @@ def find_toc_pages(start_page_index, page_list, opt, logger=None):
     return toc_page_list
 
 def remove_page_number(data):
+    """Recursively remove page_number keys from nested TOC or tree data."""
     if isinstance(data, dict):
         data.pop('page_number', None)  
         for key in list(data.keys()):
@@ -366,6 +382,7 @@ def remove_page_number(data):
     return data
 
 def extract_matching_page_pairs(toc_page, toc_physical_index, start_page_index):
+    """Pair TOC entries by title for offset calculation."""
     pairs = []
     for phy_item in toc_physical_index:
         for page_item in toc_page:
@@ -381,6 +398,7 @@ def extract_matching_page_pairs(toc_page, toc_physical_index, start_page_index):
 
 
 def calculate_page_offset(pairs):
+    """Compute the most common difference between physical and printed page numbers."""
     differences = []
     for pair in pairs:
         try:
@@ -403,6 +421,7 @@ def calculate_page_offset(pairs):
     return most_common
 
 def add_page_offset_to_toc_json(data, offset):
+    """Convert printed page numbers to physical indices using the computed offset."""
     for i in range(len(data)):
         if data[i].get('page') is not None and isinstance(data[i]['page'], int):
             data[i]['physical_index'] = data[i]['page'] + offset
@@ -412,7 +431,8 @@ def add_page_offset_to_toc_json(data, offset):
 
 
 
-def page_list_to_group_text(page_contents, token_lengths, max_tokens=20000, overlap_page=1):    
+def page_list_to_group_text(page_contents, token_lengths, max_tokens=20000, overlap_page=1):
+    """Group page texts into token-bounded chunks with overlap."""
     num_tokens = sum(token_lengths)
     
     if num_tokens <= max_tokens:
@@ -448,6 +468,7 @@ def page_list_to_group_text(page_contents, token_lengths, max_tokens=20000, over
     return subsets
 
 def add_page_number_to_toc(part, structure, model=None):
+    """Annotate TOC structure entries with physical start indices from a document part."""
     fill_prompt_seq = """
     You are given an JSON structure of a document and a partial part of the document. Your task is to check if the title that is described in the structure is started in the partial given document.
 
@@ -481,10 +502,7 @@ def add_page_number_to_toc(part, structure, model=None):
 
 
 def remove_first_physical_index_section(text):
-    """
-    Removes the first section between <physical_index_X> and <physical_index_X> tags,
-    and returns the remaining text.
-    """
+    """Remove the first physical_index-tagged section from text."""
     pattern = r'<physical_index_\d+>.*?<physical_index_\d+>'
     match = re.search(pattern, text, re.DOTALL)
     if match:
@@ -494,6 +512,7 @@ def remove_first_physical_index_section(text):
 
 ### add verify completeness
 def generate_toc_continue(toc_content, part, model=None):
+    """Continue hierarchical TOC extraction for the next document chunk."""
     print('start generate_toc_continue')
     prompt = """
     You are an expert in extracting hierarchical tree structure.
@@ -529,6 +548,7 @@ def generate_toc_continue(toc_content, part, model=None):
     
 ### add verify completeness
 def generate_toc_init(part, model=None):
+    """Initialize hierarchical TOC extraction from the first document chunk."""
     print('start generate_toc_init')
     prompt = """
     You are an expert in extracting hierarchical tree structure, your task is to generate the tree structure of the document.
@@ -563,6 +583,7 @@ def generate_toc_init(part, model=None):
         raise Exception(f'finish reason: {finish_reason}')
 
 def process_no_toc(page_list, start_index=1, model=None, logger=None):
+    """Build TOC with page numbers when no TOC pages exist in the document."""
     page_contents=[]
     token_lengths=[]
     for page_index in range(start_index, start_index+len(page_list)):
@@ -584,6 +605,7 @@ def process_no_toc(page_list, start_index=1, model=None, logger=None):
     return toc_with_page_number
 
 def process_toc_no_page_numbers(toc_content, toc_page_list, page_list,  start_index=1, model=None, logger=None):
+    """Map TOC entries to physical pages when the TOC lacks printed page numbers."""
     page_contents=[]
     token_lengths=[]
     toc_content = toc_transformer(toc_content, model)
@@ -609,6 +631,7 @@ def process_toc_no_page_numbers(toc_content, toc_page_list, page_list,  start_in
 
 
 def process_toc_with_page_numbers(toc_content, toc_page_list, page_list, toc_check_page_num=None, model=None, logger=None):
+    """Map TOC entries using printed page numbers and offset calibration."""
     toc_with_page_number = toc_transformer(toc_content, model)
     logger.info(f'toc_with_page_number: {toc_with_page_number}')
 
@@ -643,6 +666,7 @@ def process_toc_with_page_numbers(toc_content, toc_page_list, page_list, toc_che
 
 ##check if needed to process none page numbers
 def process_none_page_numbers(toc_items, page_list, start_index=1, model=None):
+    """Fill missing physical_index values for TOC items without page numbers."""
     for i, item in enumerate(toc_items):
         if "physical_index" not in item:
             # logger.info(f"fix item: {item}")
@@ -683,6 +707,7 @@ def process_none_page_numbers(toc_items, page_list, start_index=1, model=None):
 
 
 def check_toc(page_list, opt=None):
+    """Locate TOC pages and determine whether printed page indices are present."""
     toc_page_list = find_toc_pages(start_page_index=0, page_list=page_list, opt=opt)
     if len(toc_page_list) == 0:
         print('no toc found')
@@ -724,9 +749,9 @@ def check_toc(page_list, opt=None):
 
 
 
-
 ################### fix incorrect toc #########################################################
 async def single_toc_item_index_fixer(section_title, content, model=None):
+    """Find the physical start page for a single TOC section via LLM."""
     toc_extractor_prompt = """
     You are given a section title and several pages of a document, your job is to find the physical index of the start page of the section in the partial document.
 
@@ -750,6 +775,7 @@ async def single_toc_item_index_fixer(section_title, content, model=None):
 
 
 async def fix_incorrect_toc(toc_with_page_number, page_list, incorrect_results, start_index=1, model=None, logger=None):
+    """Fix physical indices for TOC items that failed verification."""
     print(f'start fix_incorrect_toc with {len(incorrect_results)} incorrect results')
     incorrect_indices = {result['list_index'] for result in incorrect_results}
     
@@ -758,6 +784,7 @@ async def fix_incorrect_toc(toc_with_page_number, page_list, incorrect_results, 
     incorrect_results_and_range_logs = []
     # Helper function to process and check a single incorrect item
     async def process_and_check_item(incorrect_item):
+        """Re-locate and validate physical_index for one incorrect TOC item."""
         list_index = incorrect_item['list_index']
         
         # Check if list_index is valid
@@ -868,6 +895,7 @@ async def fix_incorrect_toc(toc_with_page_number, page_list, incorrect_results, 
 
 
 async def fix_incorrect_toc_with_retries(toc_with_page_number, page_list, incorrect_results, start_index=1, max_attempts=3, model=None, logger=None):
+    """Retry incorrect TOC index fixes up to max_attempts."""
     print('start fix_incorrect_toc')
     fix_attempt = 0
     current_toc = toc_with_page_number
@@ -890,6 +918,7 @@ async def fix_incorrect_toc_with_retries(toc_with_page_number, page_list, incorr
 
 ################### verify toc #########################################################
 async def verify_toc(page_list, list_result, start_index=1, N=None, model=None):
+    """Sample-check TOC items and return accuracy plus incorrect results."""
     print('start verify_toc')
     # Find the last non-None physical_index
     last_physical_index = None
@@ -949,6 +978,7 @@ async def verify_toc(page_list, list_result, start_index=1, N=None, model=None):
 
 ################### main process #########################################################
 async def meta_processor(page_list, mode=None, toc_content=None, toc_page_list=None, start_index=1, opt=None, logger=None):
+    """Run TOC processing pipeline with verification, fixes, and fallback modes."""
     print(mode)
     print(f'start_index: {start_index}')
     
@@ -990,6 +1020,7 @@ async def meta_processor(page_list, mode=None, toc_content=None, toc_page_list=N
         
  
 async def process_large_node_recursively(node, page_list, opt=None, logger=None):
+    """Recursively subdivide large tree nodes into nested TOC structures."""
     node_page_list = page_list[node['start_index']-1:node['end_index']]
     token_num = sum([page[1] for page in node_page_list])
     
@@ -1019,6 +1050,7 @@ async def process_large_node_recursively(node, page_list, opt=None, logger=None)
     return node
 
 async def tree_parser(page_list, opt, doc=None, logger=None):
+    """Parse document into a hierarchical TOC tree from a PDF page list."""
     check_toc_result = check_toc(page_list, opt)
     logger.info(check_toc_result)
 
@@ -1056,6 +1088,7 @@ async def tree_parser(page_list, opt, doc=None, logger=None):
 
 
 def page_index_main(doc, opt=None):
+    """Parse a PDF and return hierarchical page-index structure with optional enrichments."""
     logger = JsonLogger(doc)
     
     is_valid_pdf = (
@@ -1072,6 +1105,7 @@ def page_index_main(doc, opt=None):
     logger.info({'total_token': sum([page[1] for page in page_list])})
 
     async def page_index_builder():
+        """Build enriched structure with optional IDs, text, and summaries."""
         structure = await tree_parser(page_list, opt, doc=doc, logger=logger)
         if opt.if_add_node_id == 'yes':
             write_node_id(structure)    
@@ -1104,7 +1138,7 @@ def page_index_main(doc, opt=None):
 
 def page_index(doc, model=None, toc_check_page_num=None, max_page_num_each_node=None, max_token_num_each_node=None,
                if_add_node_id=None, if_add_node_summary=None, if_add_doc_description=None, if_add_node_text=None):
-    
+    """Public API to index a PDF document with configurable options."""
     user_opt = {
         arg: value for arg, value in locals().items()
         if arg != "doc" and value is not None
@@ -1114,10 +1148,7 @@ def page_index(doc, model=None, toc_check_page_num=None, max_page_num_each_node=
 
 
 def validate_and_truncate_physical_indices(toc_with_page_number, page_list_length, start_index=1, logger=None):
-    """
-    Validates and truncates physical indices that exceed the actual document length.
-    This prevents errors when TOC references pages that don't exist in the document (e.g. the file is broken or incomplete).
-    """
+    """Null out physical_index values that exceed the actual document page count."""
     if not toc_with_page_number:
         return toc_with_page_number
     

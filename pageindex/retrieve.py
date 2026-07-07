@@ -1,3 +1,5 @@
+"""Retrieval helpers that return JSON strings for agent-based document QA."""
+
 import json
 import PyPDF2
 
@@ -54,15 +56,13 @@ def _get_pdf_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:
 
 
 def _get_md_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:
-    """
-    For Markdown documents, 'pages' are line numbers.
-    Find nodes whose line_num falls within [min(page_nums), max(page_nums)] and return their text.
-    """
+    """For Markdown, treat page numbers as line numbers and return matching section text."""
     min_line, max_line = min(page_nums), max(page_nums)
     results = []
     seen = set()
 
     def _traverse(nodes):
+        """Walk the tree and collect nodes whose line_num falls in the requested range."""
         for node in nodes:
             ln = node.get('line_num')
             if ln and min_line <= ln <= max_line and ln not in seen:
@@ -79,7 +79,7 @@ def _get_md_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:
 # ── Tool functions ────────────────────────────────────────────────────────────
 
 def get_document(documents: dict, doc_id: str) -> str:
-    """Return JSON with document metadata: doc_id, doc_name, doc_description, type, status, page_count (PDF) or line_count (Markdown)."""
+    """Return JSON metadata for a document: name, description, type, and page/line count."""
     doc_info = documents.get(doc_id)
     if not doc_info:
         return json.dumps({'error': f'Document {doc_id} not found'})
@@ -98,7 +98,7 @@ def get_document(documents: dict, doc_id: str) -> str:
 
 
 def get_document_structure(documents: dict, doc_id: str) -> str:
-    """Return tree structure JSON with text fields removed (saves tokens)."""
+    """Return the document tree as JSON with text fields removed to save tokens."""
     doc_info = documents.get(doc_id)
     if not doc_info:
         return json.dumps({'error': f'Document {doc_id} not found'})
@@ -108,15 +108,7 @@ def get_document_structure(documents: dict, doc_id: str) -> str:
 
 
 def get_page_content(documents: dict, doc_id: str, pages: str) -> str:
-    """
-    Retrieve page content for a document.
-
-    pages format: '5-7', '3,8', or '12'
-    For PDF: pages are physical page numbers (1-indexed).
-    For Markdown: pages are line numbers corresponding to node headers.
-
-    Returns JSON list of {'page': int, 'content': str}.
-    """
+    """Return JSON list of {page, content} for the given pages string (e.g. '5-7', '3,8', '12')."""
     doc_info = documents.get(doc_id)
     if not doc_info:
         return json.dumps({'error': f'Document {doc_id} not found'})

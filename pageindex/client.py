@@ -1,3 +1,5 @@
+"""High-level client for indexing documents and retrieving structure/content."""
+
 import os
 import uuid
 import json
@@ -27,12 +29,14 @@ def _normalize_retrieve_model(model: str) -> str:
 
 class PageIndexClient:
     """
-    A client for indexing and retrieving document content.
-    Flow: index() -> get_document() / get_document_structure() / get_page_content()
+    Client for indexing and retrieving document content.
 
+    Typical flow: index() -> get_document() / get_document_structure() / get_page_content()
     For agent-based QA, see examples/agentic_vectorless_rag_demo.py.
     """
+
     def __init__(self, api_key: str = None, model: str = None, retrieve_model: str = None, workspace: str = None):
+        """Initialize client with optional API key, models, and persistent workspace directory."""
         if api_key:
             os.environ["OPENAI_API_KEY"] = api_key
         elif not os.getenv("OPENAI_API_KEY") and os.getenv("CHATGPT_API_KEY"):
@@ -53,7 +57,7 @@ class PageIndexClient:
             self._load_workspace()
 
     def index(self, file_path: str, mode: str = "auto") -> str:
-        """Index a document. Returns a document_id."""
+        """Index a PDF or Markdown file and return a new document_id."""
         # Persist a canonical absolute path so workspace reloads do not
         # reinterpret caller-relative paths against the workspace directory.
         file_path = os.path.abspath(os.path.expanduser(file_path))
@@ -131,7 +135,7 @@ class PageIndexClient:
 
     @staticmethod
     def _make_meta_entry(doc: dict) -> dict:
-        """Build a lightweight meta entry from a document dict."""
+        """Build a lightweight metadata entry (no structure or page text) for _meta.json."""
         entry = {
             'type': doc.get('type', ''),
             'doc_name': doc.get('doc_name', ''),
@@ -146,7 +150,7 @@ class PageIndexClient:
 
     @staticmethod
     def _read_json(path) -> dict | None:
-        """Read a JSON file, returning None on any error."""
+        """Read a JSON file, returning None on decode or I/O errors."""
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
@@ -155,6 +159,7 @@ class PageIndexClient:
             return None
 
     def _save_doc(self, doc_id: str):
+        """Write full document JSON to workspace and keep only lightweight fields in memory."""
         doc = self.documents[doc_id].copy()
         # Strip text from structure nodes — redundant with pages (PDF only)
         if doc.get('structure') and doc.get('type') == 'pdf':
@@ -168,7 +173,7 @@ class PageIndexClient:
         self.documents[doc_id].pop('pages', None)
 
     def _rebuild_meta(self) -> dict:
-        """Scan individual doc JSON files and return a meta dict."""
+        """Scan workspace doc JSON files and rebuild the _meta.json index."""
         meta = {}
         for path in self.workspace.glob("*.json"):
             if path.name == META_INDEX:
@@ -179,7 +184,7 @@ class PageIndexClient:
         return meta
 
     def _read_meta(self) -> dict | None:
-        """Read and validate _meta.json, returning None on any corruption."""
+        """Read and validate _meta.json; return None if missing or corrupt."""
         meta = self._read_json(self.workspace / META_INDEX)
         if meta is not None and not isinstance(meta, dict):
             print(f"Warning: {META_INDEX} is not a JSON object, ignoring")
@@ -187,6 +192,7 @@ class PageIndexClient:
         return meta
 
     def _save_meta(self, doc_id: str, entry: dict):
+        """Update _meta.json with one document entry."""
         meta = self._read_meta() or self._rebuild_meta()
         meta[doc_id] = entry
         meta_path = self.workspace / META_INDEX
@@ -194,6 +200,7 @@ class PageIndexClient:
             json.dump(meta, f, ensure_ascii=False, indent=2)
 
     def _load_workspace(self):
+        """Load document metadata from workspace on client startup."""
         meta = self._read_meta()
         if meta is None:
             meta = self._rebuild_meta()
@@ -206,7 +213,7 @@ class PageIndexClient:
             self.documents[doc_id] = doc
 
     def _ensure_doc_loaded(self, doc_id: str):
-        """Load full document JSON on demand (structure, pages, etc.)."""
+        """Lazy-load structure and pages from disk when a retrieval call needs them."""
         doc = self.documents.get(doc_id)
         if not doc or doc.get('structure') is not None:
             return
@@ -218,17 +225,17 @@ class PageIndexClient:
             doc['pages'] = full['pages']
 
     def get_document(self, doc_id: str) -> str:
-        """Return document metadata JSON."""
+        """Return document metadata as a JSON string."""
         return get_document(self.documents, doc_id)
 
     def get_document_structure(self, doc_id: str) -> str:
-        """Return document tree structure JSON (without text fields)."""
+        """Return the document tree structure as JSON (text fields stripped)."""
         if self.workspace:
             self._ensure_doc_loaded(doc_id)
         return get_document_structure(self.documents, doc_id)
 
     def get_page_content(self, doc_id: str, pages: str) -> str:
-        """Return page content for the given pages string (e.g. '5-7', '3,8', '12')."""
+        """Return page content JSON for pages like '5-7', '3,8', or '12'."""
         if self.workspace:
             self._ensure_doc_loaded(doc_id)
         return get_page_content(self.documents, doc_id, pages)
