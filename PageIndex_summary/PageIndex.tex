@@ -55,6 +55,13 @@
   basicstyle=\ttfamily\footnotesize\color{gray!80!black}
 }
 
+\lstdefinestyle{pageTextBlockInList}{
+  style=pageTextBlock,
+  linewidth=\linewidth,
+  xleftmargin=0pt,
+  xrightmargin=0pt
+}
+
 \begin{document}
 
 \section{PageIndex Implementation Flow}
@@ -70,53 +77,236 @@
     mathescape=true,
     literate={->}{$\rightarrow$}{2}
 ]
-document -> page text -> ToC detection -> tree construction -> index verification -> retrieval-ready document record
+document -> page text -> ToC detection -> section-list construction -> verification -> tree conversion -> retrieval-ready document record
 \end{lstlisting}
 
 \begin{enumerate}
-    \item \textbf{Parse pages}: Extract plain text from the pdf.
-    \item \textbf{Detect existing ToC}: Decide whether the document already contain a ToC.
-    \item \textbf{Choose tree-building path}: 
+    \item \textbf{Parse pages}: Extract plain text from the PDF.
+    \item \textbf{Detect ToC pages}: Decide whether the document already contains usable ToC pages.
+    \item \textbf{Choose section-list building path}: 
     \begin{itemize}
-        \item \textbf{ToC w/ page numbers}: Converts to \textbf{JSON} with page numbers. 
-        \item \textbf{ToC w/o page numbers}: LLM identifies where each section starts.
-        \item \textbf{If no ToC exists}: LLM infers the hierarchy directly from page-marked text.
+        \item \textbf{ToC with page numbers}: Convert the detected ToC into JSON, then map printed page numbers to physical PDF pages.
+        \item \textbf{No usable ToC}: If no ToC is found, or the detected ToC has no usable page numbers, infer the hierarchy directly from page-marked text.
+        \item \textbf{Fallback ToC-title mapping}: If the ToC-with-page-numbers path fails verification, reuse the detected ToC titles and ask the LLM to locate their physical start pages from page-marked text.
     \end{itemize}   
     \item \textbf{Group pages}: Long documents are split into token-safe groups before prompting. This keeps each LLM call within context limits and avoids forcing the model to read the whole document at once.
     \item \textbf{Verify and repair indexes}: Generated section boundaries are checked against the document text. If a section appears to start on the wrong page, the system searches nearby pages and asks the LLM to repair the boundary.
-    \item \textbf{Convert section list to tree}: The cleaned section list is converted into a recursive hierarchy. Each node receives a \fieldname{start\_index}, an \fieldname{end\_index}, and child nodes when the section contains smaller sections.
+    \item \textbf{Convert section list to tree}: The verified section list is converted into a recursive hierarchy. Each node receives a \fieldname{start\_index}, an \fieldname{end\_index}, and child nodes when the section contains smaller sections.
     \item \textbf{Split large nodes}: Sections that are too large are processed again at a finer level, creating deeper subtrees only where the document needs more detail.
     \item \textbf{Add retrieval fields}: The final tree can include \fieldname{node\_id}, raw \fieldname{text}, node \fieldname{summary}, and a document-level description depending on the indexing settings.
     \item \textbf{Store retrieval-ready data}: The system stores the document record, tree, page count, extracted page text, and optional descriptions so later retrieval can return either the compact tree or the raw evidence.
     \item \textbf{Support query-time retrieval}: At query time, the system can expose document metadata, a tree without raw text, and selected raw page evidence for answer generation.
 \end{enumerate}
 
-\noindent\textbf{LLM usage note:} These steps can use the same model, but they are separate LLM calls. The pipeline passes explicit data between steps, such as extracted page text, ToC JSON, selected \fieldname{doc\_id}, selected \fieldname{node\_id}, and retrieved evidence. It does not rely on one shared hidden chat history.
+\noindent\textbf{LLM usage note:} These steps can use the same model, but they are separate LLM calls. The pipeline passes explicit data between steps, such as extracted page text, ToC JSON, selected \fieldname{doc\_id}, selected nodes, and retrieved evidence. Some long-generation operations pass an explicit short continuation history inside that operation, but the overall pipeline does not rely on one shared hidden chat history.
 
 \newpage
-\section{Indexing Step 1: Create PageIndex Tree for Each Document Using LLM }
+\section{Indexing Step 1: Create PageIndex Tree for Each Document Using LLM}
 \begin{itemize}
     \item \textbf{Input}: Document
-    \item \textbf{Output}: \textbf{JSON-based hierarchical structure} that represents \textbf{ToC}
-    \item \textbf{LLM role}: The LLM can be used to identify section boundaries, generate titles, write summaries, and decide how detailed the tree should be.
+    \item \textbf{Output}: \textbf{JSON-based hierarchical PageIndex tree}
+    \item \textbf{LLM role}: The LLM is used to detect ToC pages, transform ToC text into JSON, infer section boundaries, locate section starts, repair incorrect page indexes, and generate optional summaries/descriptions.
 \end{itemize}
 
 \noindent\textbf{Implementation detail:}
 \begin{enumerate}
-    \item \textbf{Extract page text}: Extract ordered page-level text from document.
+    \item \textbf{Extract page text}: Convert the PDF into an ordered list of page text and token counts.
     \begin{itemize}
         \item The actual extraction output is a list of \texttt{(page\_text, token\_count)} pairs.
-        \item The physical page index is implied by the list position: the first pair is page 1, the second pair is page 2, etc.
+        \item The physical page index is implied by the list position: the first pair is physical page 1, the second pair is physical page 2, etc.
 
-    \begin{lstlisting}[style=pageTextBlock]
+\begin{lstlisting}[style=pageTextBlockInList]
 [
   ("Annual Report 2023 ...", 742),
   ("Financial Stability ...", 691)
 ]
 \end{lstlisting}
-        \item Before the LLM receives the page text, the ordered pages are wrapped with physical page tags:
-  
-\begin{lstlisting}[style=pageTextBlock]
+    \end{itemize}
+
+    \item \textbf{Detect ToC pages}: 
+    \begin{enumerate}
+    \item Ask the LLM to label each checked page as \texttt{toc\_detected: "yes"} or \texttt{"no"}.  \\
+\textbf{Input}: The extracted text of one checked page. The token count is kept for later grouping, but is not sent to this ToC-detection prompt. \\
+\begin{lstlisting}[style=pageTextBlockInList]
+Annual Report 2023 ...
+\end{lstlisting}
+    \textbf{LLM Output}:  Detected ToC pages are stored as zero-based list indexes.
+\begin{lstlisting}[style=pageTextBlockInList]
+toc_page_list = [0, 1]  // physical PDF pages 1 and 2
+\end{lstlisting}
+    \textbf{Remark}:
+    \end{enumerate}
+\begin{itemize}
+        \item Abstract, summary, notation list, figure list, and table list are not treated as ToC.
+        \item If no ToC is found in the first \fieldname{toc\_check\_page\_num} pages, 20 by default, the result is an empty ToC page list.
+        \item Page-check behavior:
+        
+        \begin{tabularx}{\linewidth}{@{}p{0.30\linewidth}X@{}}
+        \toprule
+        \textbf{Situation} & \textbf{Pages checked} \\
+        \midrule
+        \textbf{No ToC found} & Check up to \fieldname{toc\_check\_page\_num} pages, then return \texttt{toc\_page\_list = []}. \\
+        \textbf{ToC found early} & Keep scanning until the first non-ToC page after the ToC block. \\
+        \textbf{ToC spans past page 20} & Continue past page 20 while pages are still labeled as ToC. \\
+        \bottomrule
+        \end{tabularx}
+\end{itemize}
+    
+    
+
+    \item \textbf{Detect page numbers in the ToC}: 
+    \begin{enumerate}
+    \item Concatenate the detected ToC pages and normalize dot leaders. Then ask the LLM whether section page numbers exist. \\
+\textbf{Input}: Concatenated ToC text. \\
+\begin{lstlisting}[style=pageTextBlockInList]
+Contents
+1. Introduction .............. 3
+2. Monetary Policy ........... 9
+3. Financial Stability ...... 21
+
+vs.
+
+Contents
+1. Introduction
+2. Monetary Policy
+3. Financial Stability
+\end{lstlisting}
+    \textbf{LLM Output}: Whether page numbers are provided in the ToC.
+\begin{lstlisting}[style=pageTextBlockInList]
+page_index_given_in_toc: "yes"
+
+vs.
+
+page_index_given_in_toc: "no"
+\end{lstlisting}
+    \textbf{Remark}:
+    \end{enumerate}
+\begin{itemize}
+        \item Dot leaders such as \texttt{........} are normalized before the LLM call.
+        \item If \texttt{page\_index\_given\_in\_toc: "yes"}, the existing ToC is used as the structure source.
+        \item If \texttt{page\_index\_given\_in\_toc: "no"}, the implementation may check later ToC pages within \fieldname{toc\_check\_page\_num}; if no usable page-number ToC is found, the top-level path falls back to generating the tree from full page-marked text.
+\end{itemize}
+    
+    \item \textbf{Construct PageIndex Tree}: 
+    \begin{itemize}
+        \item \textbf{ToC + page numbers found}: Normalize the ToC into JSON, map printed page numbers to physical PDF pages, compute the page offset, and fill missing physical indexes.
+        \begin{enumerate}[label=(\alph*)]
+            \item  Convert ToC to JSON. \\
+            \textbf{Input}: Concatenated detected ToC pages (plain ToC text). \\
+            \textbf{LLM Output}: A flat JSON list.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"structure": "1", "title": "Introduction", "page": 3},
+  {"structure": "2", "title": "Monetary Policy", "page": 9},
+  {"structure": "3", "title": "Financial Stability", "page": 21}
+]
+\end{lstlisting}
+            \item Calibrate the difference between ToC page numbers and PDF page extracted positions. \\
+            \textbf{Input}: A copy of the normalized ToC JSON + at most \fieldname{toc\_check\_page\_num} pages after the ToC, wrapped with physical page tags. The implementation uses this to ask where early ToC titles actually appear in the PDF.
+
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"structure": "1", "title": "Introduction", "page": 3},
+  {"structure": "2", "title": "Monetary Policy", "page": 9},
+  {"structure": "3", "title": "Financial Stability", "page": 21}
+]
+\end{lstlisting}
+\begin{lstlisting}[style=pageTextBlockInList]
+<physical_index_4>
+Introduction ...
+<physical_index_4>
+
+<physical_index_5>
+...
+<physical_index_5>
+\end{lstlisting}
+\textbf{LLM Output}: Physical PDF pages that contain the start of matching ToC titles.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"structure": "1", "title": "Introduction", "physical_index": 8},
+  {"structure": "2", "title": "Monetary Policy", "physical_index": 14}
+]
+\end{lstlisting}
+            \item Match entries by title and compute the offset with normal code (Rules based).
+\begin{lstlisting}[style=pageTextBlockInList]
+Introduction:     physical_index 8  - printed page 3 = offset 5
+Monetary Policy:  physical_index 14 - printed page 9 = offset 5
+
+physical_index = printed page + most common offset
+\end{lstlisting}
+            \item Apply the offset to every ToC entry and fill missing physical indexes by asking the LLM to locate them within pages bounded by nearby known sections.
+            \item Verify and repair the flat section list before tree conversion. This is the step that turns a predicted flat list into a \textbf{verified} flat list.
+            \begin{itemize}
+                \item Remove or ignore \fieldname{physical\_index} values that are outside the real document page range.
+                \item For each predicted section item, load its predicted page text. Then ask the LLM whether the section title appears on that page.
+                \item Compute the verification accuracy from those title-page checks.
+                \item If accuracy is \texttt{1.0}, accept the flat list.
+                \item If accuracy is above \texttt{0.6} but some sections are wrong, repair the incorrect page indexes up to 3 attempts.
+                \item If accuracy is too low in the ToC-with-page-numbers path, fall back to mapping the ToC titles from page-marked text; if that also fails, use the no-ToC generation path.
+                \item After the list is accepted, check whether each section title starts at the beginning of its page and store the result as \fieldname{appear\_start}. This is later used when computing \fieldname{end\_index}.
+            \end{itemize}
+\textbf{LLM check input}: One predicted section item plus the extracted text from its predicted physical page.
+\begin{lstlisting}[style=pageTextBlockInList]
+section_item = {
+  "structure": "2",
+  "title": "Monetary Policy",
+  "physical_index": 14
+}
+
+page_text loaded from physical_index 14:
+<physical_index_14>
+Monetary Policy ...
+<physical_index_14>
+
+-> answer: "yes"
+\end{lstlisting}
+\textbf{Output}: Verified flat section list.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"structure": "1", "title": "Introduction",
+   "physical_index": 8, "appear_start": "yes"},
+  {"structure": "2", "title": "Monetary Policy",
+   "physical_index": 14, "appear_start": "yes"}
+]
+\end{lstlisting}
+            \item Convert the verified flat list into the PageIndex tree. This step is rules-based and happens after section starts have been produced, checked, and repaired when needed.
+            \begin{itemize}
+                \item Each \fieldname{physical\_index} becomes the node's \fieldname{start\_index}.
+                \item Each \fieldname{end\_index} is derived from the next section's \fieldname{physical\_index}. If the next section title appears at the start of its page, the previous node ends on the page before it; otherwise it may share that page.
+                \item The \fieldname{structure} value controls nesting: \texttt{2.1} becomes a child of \texttt{2}, and \texttt{2.1.1} becomes a child of \texttt{2.1}.
+            \end{itemize}
+\textbf{Input}: Verified flat section list.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"structure": "1", "title": "Introduction",
+   "physical_index": 8, "appear_start": "yes"},
+  {"structure": "2", "title": "Monetary Policy",
+   "physical_index": 14, "appear_start": "yes"},
+  {"structure": "2.1", "title": "March Summary",
+   "physical_index": 16, "appear_start": "yes"},
+  {"structure": "3", "title": "Financial Stability",
+   "physical_index": 21, "appear_start": "yes"}
+]
+\end{lstlisting}
+\textbf{Output}: Nested PageIndex tree with page ranges.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"title": "Introduction", "start_index": 8,
+   "end_index": 13},
+  {"title": "Monetary Policy", "start_index": 14,
+   "end_index": 15, "nodes": [
+    {"title": "March Summary", "start_index": 16,
+     "end_index": 20}
+  ]},
+  {"title": "Financial Stability", "start_index": 21,
+   "end_index": 31}
+]
+\end{lstlisting}
+        \end{enumerate}
+        \item \textbf{No usable ToC}: If no ToC is found, or if the detected ToC has no page numbers, generate the tree from page-marked document text.
+        \begin{enumerate}[label=(\alph*)]
+            \item Wrap document pages with physical page tags.
+\begin{lstlisting}[style=pageTextBlockInList]
 <physical_index_1>
 Annual Report 2023 ...
 <physical_index_1>
@@ -125,58 +315,300 @@ Annual Report 2023 ...
 Financial Stability ...
 <physical_index_2>
 \end{lstlisting}
-
-\end{itemize} 
-
-    \item \textbf{Detect existing ToC using LLM}: 
-    \begin{itemize}
-        \item Using LLM to label whether each page is a ToC. Since existing structure usually reflects hierarchy structure.
-\begin{lstlisting}[style=pageTextBlock]
-toc_page_list = [1, 2]
+            \item Group the page-marked text by token budget so each LLM call stays within context limits. The grouping is based on token count, not a fixed page count.
+\textbf{Criteria:}
+\begin{itemize}
+    \item If the total document text is within \texttt{max\_tokens} (20,000 by default), all pages stay in one group.
+    \item If the document is longer, the system estimates how many groups are needed and computes a target token budget for each group.
+    \item A new group starts when adding the next page would exceed that target budget.
+    \item Neighboring groups keep a one-page overlap by default, so section boundaries near a group edge are less likely to be lost.
+\end{itemize}
+\begin{lstlisting}[style=pageTextBlockInList]
+group_1: <physical_index_1> ... <physical_index_12>
+group_2: <physical_index_12> ... <physical_index_24>
 \end{lstlisting}
-        \item Page-check behavior:
-        
-        \begin{tabularx}{\linewidth}{@{}p{0.30\linewidth}X@{}}
-        \toprule
-        \textbf{Situation} & \textbf{Pages checked} \\
-        \midrule
-        \textbf{No ToC found} & Up to \textbf{\textasciitilde20 pages} (PDF pages 1--20), then stop \\
-        \textbf{ToC found early} & Only until the ToC block ends (could be 3 pages, could be 8) \\
-        \textbf{ToC spans 20 pages} & \textbf{More than 20} -- keeps going while still inside the ToC block \\
-        \bottomrule
-        \end{tabularx}
-        
-\end{itemize} 
+            \item Ask the LLM to generate section titles, hierarchy, and physical start pages from each group. Each LLM call receives one page-marked group. \\
+\textbf{Input}: One group of page-marked document text.
+\begin{lstlisting}[style=pageTextBlockInList]
+<physical_index_1>
+Annual Report 2023 ...
+Introduction ...
+<physical_index_1>
 
-    \item \textbf{Detect existing ToC using LLM}: 
-        \item Concatenate those pages' text and feed to LLM to detect whether page numbers are given for sections in the ToC.
-        \begin{lstlisting}[style=pageTextBlock]
-Example input to that one call:
+...
 
-Contents
-1. Introduction .............. 3
-2. Monetary Policy ........... 9
-3. Financial Stability ...... 21
-
--> page_index_given_in_toc: "yes"
-
-vs.
-
-Contents
-1. Introduction
-2. Monetary Policy
-3. Financial Stability
-
--> page_index_given_in_toc: "no"
+<physical_index_21>
+Financial Stability ...
+<physical_index_21>
 \end{lstlisting}
-    
-        
-    \item \textbf{Build the first tree}: If a ToC exists, the system normalizes it into JSON and aligns its section pages to physical pages. If no ToC exists, the LLM reads page-marked text and proposes section titles, hierarchy, and start pages.
-    \item \textbf{Handle long documents}: The document can be divided into token-safe groups. The LLM reads one group at a time and returns partial structure, then the system merges the partial structure into one document tree.
-    \item \textbf{Verify page boundaries}: Section titles and start pages are checked against the extracted text. When a boundary is wrong, the system searches nearby pages and repairs the index.
-    \item \textbf{Create recursive nodes}: The final structure is converted into nested nodes. Parent nodes cover broad sections; child nodes cover more specific subsections.
-    \item \textbf{Control detail level}: The tree becomes deeper when a section is too long or too dense. Short sections can remain as leaf nodes to avoid unnecessary complexity.
-    \item \textbf{Attach retrieval fields}: Each node receives a stable \fieldname{node\_id}, page range, optional summary, and optional raw text pointer.
+\textbf{LLM Output}: A flat section list detected from that group.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"structure": "1", "title": "Introduction",
+   "physical_index": "<physical_index_1>"},
+  {"structure": "2", "title": "Financial Stability",
+   "physical_index": "<physical_index_21>"}
+]
+\end{lstlisting}
+            \item Continue group by group and merge the partial structures. The first group creates the initial flat list; later groups extend that list.
+\begin{lstlisting}[style=pageTextBlockInList]
+group_1 output + group_2 output + ... 
+-> merged flat section list
+\end{lstlisting}
+            \item Convert physical page tags into numeric indexes.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"structure": "1", "title": "Introduction",
+   "physical_index": 1},
+  {"structure": "2", "title": "Financial Stability",
+   "physical_index": 21}
+]
+\end{lstlisting}
+            \item Verify and repair the merged flat list using the same hybrid verification logic: rule-based range checks, LLM title-page checks, accuracy calculation, and repair attempts. If this no-ToC path still has low accuracy, the implementation raises a processing failure rather than trying another indexing path.
+\begin{lstlisting}[style=pageTextBlockInList]
+section_item = {
+  "structure": "2",
+  "title": "Financial Stability",
+  "physical_index": 21
+}
+
+page_text loaded from physical_index 21:
+<physical_index_21>
+Financial Stability ...
+<physical_index_21>
+
+-> answer: "yes"
+\end{lstlisting}
+            \item Check whether each accepted section starts at the beginning of its page and store \fieldname{appear\_start}.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"structure": "1", "title": "Introduction",
+   "physical_index": 1, "appear_start": "yes"},
+  {"structure": "2", "title": "Financial Stability",
+   "physical_index": 21, "appear_start": "yes"}
+]
+\end{lstlisting}
+            \item Convert the verified flat list into the nested PageIndex tree. This is rules-based: \fieldname{physical\_index} becomes \fieldname{start\_index}, \fieldname{end\_index} is derived from the next section start, and \fieldname{structure} controls nesting.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"title": "Introduction", "start_index": 1,
+   "end_index": 20},
+  {"title": "Financial Stability", "start_index": 21,
+   "end_index": 31}
+]
+\end{lstlisting}
+        \end{enumerate}
+        \item \textbf{Fallback after ToC + page numbers fails verification}: If the ToC-with-page-numbers path fails verification, reuse the detected ToC titles and map them from token-bounded groups of page-marked document text. If that also fails verification, fall back to no-ToC generation.
+        \begin{enumerate}[label=(\alph*)]
+            \item Re-normalize the detected ToC text into JSON and ask the LLM to locate section starts from each group of page-marked document text. In this fallback, the physical positions come from document pages rather than from the printed-page offset.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"structure": "1", "title": "Introduction"},
+  {"structure": "2", "title": "Monetary Policy"},
+  {"structure": "3", "title": "Financial Stability"}
+]
+\end{lstlisting}
+\begin{lstlisting}[style=pageTextBlockInList]
+<physical_index_1>
+...
+<physical_index_1>
+
+<physical_index_8>
+Introduction ...
+<physical_index_8>
+\end{lstlisting}
+            \item The LLM returns physical start pages for the ToC titles.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"structure": "1", "title": "Introduction",
+   "physical_index": 8},
+  {"structure": "2", "title": "Monetary Policy",
+   "physical_index": 14}
+]
+\end{lstlisting}
+            \item Verify the mapped physical indexes. If verification still fails, run the no-ToC generation path.
+            \item This fallback is used after the page-number path fails; it is not the normal top-level path for \texttt{page\_index\_given\_in\_toc: "no"}.
+        \end{enumerate}
+    \end{itemize}
+
+    \item \textbf{Post-process and split large nodes}: Convert the verified flat section list into the final nested PageIndex tree. Basic post-processing is rules-based; large-node splitting can trigger new LLM calls.
+    \begin{enumerate}[label=(\alph*)]
+        \item Convert the verified flat list into page ranges and nested \fieldname{nodes}. \\
+        \textbf{Input}: Verified flat section list.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"structure": "1", "title": "Introduction",
+   "physical_index": 1, "appear_start": "yes"},
+  {"structure": "2", "title": "Financial Stability",
+   "physical_index": 21, "appear_start": "yes"}
+]
+\end{lstlisting}
+        \textbf{LLM Output}: None. This is rules-based. \\
+        \textbf{Code Output}: Nested tree with \fieldname{start\_index}, \fieldname{end\_index}, and child \fieldname{nodes}.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"title": "Introduction", "start_index": 1,
+   "end_index": 20},
+  {"title": "Financial Stability", "start_index": 21,
+   "end_index": 31}
+]
+\end{lstlisting}
+
+        \item Decide whether each node is too large. \\
+        \textbf{Input}: One node's page span and token count from the extracted page list.
+\begin{lstlisting}[style=pageTextBlockInList]
+node = {
+  "title": "Financial Stability",
+  "start_index": 21,
+  "end_index": 35
+}
+
+page_span = 14
+token_count = 24000
+\end{lstlisting}
+        \textbf{LLM Output}: None. This is rules-based. \\
+        \textbf{Rule}: Split only when both conditions are true.
+\begin{lstlisting}[style=pageTextBlockInList]
+page_span > max_page_num_each_node
+and
+token_count >= max_token_num_each_node
+\end{lstlisting}
+
+        \item If a node is too large, re-index that node's page range using the no-ToC path. \\
+        \textbf{Input}: The large node's page text, wrapped with physical page tags and grouped by token budget.
+\begin{lstlisting}[style=pageTextBlockInList]
+<physical_index_21>
+Financial Stability ...
+<physical_index_21>
+
+...
+
+<physical_index_35>
+Conclusion of this section ...
+<physical_index_35>
+\end{lstlisting}
+        \textbf{LLM Output}: A deeper flat section list for that node.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"structure": "1", "title": "Monitoring Financial Vulnerabilities",
+   "physical_index": "<physical_index_22>"},
+  {"structure": "2", "title": "Domestic and International Cooperation",
+   "physical_index": "<physical_index_28>"}
+]
+\end{lstlisting}
+        \textbf{Code Output}: Verified child nodes are inserted under the large parent node.
+\begin{lstlisting}[style=pageTextBlockInList]
+{
+  "title": "Financial Stability",
+  "start_index": 21,
+  "end_index": 22,
+  "nodes": [
+    {"title": "Monitoring Financial Vulnerabilities",
+     "start_index": 22, "end_index": 27},
+    {"title": "Domestic and International Cooperation",
+     "start_index": 28, "end_index": 35}
+  ]
+}
+\end{lstlisting}
+    \end{enumerate}
+
+    \item \textbf{Attach retrieval fields}: Add optional fields used by retrieval and answering. Some fields are added by code; summaries and document description use LLM calls when enabled.
+    \begin{enumerate}[label=(\alph*)]
+        \item Add \fieldname{node\_id}. \\
+        \textbf{Input}: Nested PageIndex tree without ids.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"title": "Introduction", "start_index": 1,
+   "end_index": 20}
+]
+\end{lstlisting}
+        \textbf{LLM Output}: None. This is rules-based. \\
+        \textbf{Code Output}: Tree with zero-padded node ids.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"title": "Introduction", "node_id": "0000",
+   "start_index": 1, "end_index": 20}
+]
+\end{lstlisting}
+
+        \item Add raw node \fieldname{text}. \\
+        \textbf{Input}: Node page range plus cached extracted page text.
+\begin{lstlisting}[style=pageTextBlockInList]
+node = {"start_index": 1, "end_index": 2}
+
+page_list = [
+  ("Annual Report 2023 ...", 742),
+  ("Introduction ...", 615)
+]
+\end{lstlisting}
+        \textbf{LLM Output}: None. This is copied by code. \\
+        \textbf{Code Output}: The node receives concatenated raw text.
+\begin{lstlisting}[style=pageTextBlockInList]
+{
+  "title": "Introduction",
+  "text": "Annual Report 2023 ... Introduction ..."
+}
+\end{lstlisting}
+
+        \item Generate node \fieldname{summary} when enabled. \\
+        \textbf{Input}: One node's raw \fieldname{text}.
+\begin{lstlisting}[style=pageTextBlockInList]
+Partial Document Text:
+Financial Stability ...
+\end{lstlisting}
+        \textbf{LLM Output}: A concise summary stored on that node.
+\begin{lstlisting}[style=pageTextBlockInList]
+{
+  "summary": "This section discusses financial stability,
+  vulnerabilities, monitoring, and coordination."
+}
+\end{lstlisting}
+        \textbf{Remark}: If raw \fieldname{text} is not requested in the final tree, the implementation can temporarily attach text for summary generation and remove it afterward.
+
+        \item Generate document description when enabled. \\
+        \textbf{Input}: A clean version of the tree containing fields such as \fieldname{title}, \fieldname{node\_id}, \fieldname{summary}, and child \fieldname{nodes}.
+\begin{lstlisting}[style=pageTextBlockInList]
+[
+  {"title": "Introduction", "node_id": "0000",
+   "summary": "Overview of the report."},
+  {"title": "Financial Stability", "node_id": "0006",
+   "summary": "Discussion of financial stability."}
+]
+\end{lstlisting}
+        \textbf{LLM Output}: One sentence that describes the whole document.
+\begin{lstlisting}[style=pageTextBlockInList]
+doc_description =
+"A Federal Reserve annual report covering policy,
+financial stability, supervision, and institutional activities."
+\end{lstlisting}
+        \textbf{Remark}: In the current PDF implementation, document description generation happens after node summaries when both are enabled.
+
+        \item Store the document record. \\
+        \textbf{Input}: Final tree, document path, document name, page count, cached page text, and optional document description.
+\begin{lstlisting}[style=pageTextBlockInList]
+{
+  "path": "/abs/path/annual-report-2023.pdf",
+  "doc_name": "annual-report-2023.pdf",
+  "page_count": 31,
+  "structure": [ ... ],
+  "pages": [ ... ]
+}
+\end{lstlisting}
+        \textbf{LLM Output}: None. This is storage code. \\
+        \textbf{Code Output}: A retrieval-ready document record with a returned \fieldname{id}.
+\begin{lstlisting}[style=pageTextBlockInList]
+{
+  "id": "uuid-doc-id",
+  "type": "pdf",
+  "path": "/abs/path/annual-report-2023.pdf",
+  "doc_name": "annual-report-2023.pdf",
+  "doc_description": "A Federal Reserve annual report ...",
+  "page_count": 31,
+  "structure": [ ... ],
+  "pages": [ ... ]
+}
+\end{lstlisting}
+    \end{enumerate}
 \end{enumerate}
 
 \begin{itemize}
@@ -190,24 +622,26 @@ Contents
     xrightmargin=0em,
     morekeywords={Node,string,object},
     keywordstyle=\color{gray!70!black},
-    morekeywords={[2]node_id,title,description,metadata,sub_nodes},
+    morekeywords={[2]node_id,title,start_index,end_index,summary,text,nodes},
     keywordstyle={[2]\color{blue}},
     commentstyle=\color{gray!70!black}\itshape,
     basicstyle=\ttfamily\normalsize\color{gray!70!black},
     literate={:}{{\textcolor{red}{:}}}{1}
 ]
 Node {
-  node_id: string,        // Unique node identifier
-  title: string,           // Human-readable label or title
-  description: string,    // Optional detailed explanation of the node
-  metadata: object,       // Arbitrary key-value pairs for context or attributes
-  sub_nodes: [Node]       // Array of child nodes (recursive structure)
+  node_id: string,        // Optional unique node identifier
+  title: string,          // Human-readable section title
+  start_index: integer,   // Start physical PDF page
+  end_index: integer,     // End physical PDF page
+  summary: string,        // Optional LLM-generated node summary
+  text: string,           // Optional raw section text
+  nodes: [Node]           // Optional child nodes
 }
 \end{lstlisting} 
     \begin{itemize}[label=\notesquare]
         \item \fieldname{node\_id}: Serves as a reference key to locate the corresponding raw data.
-        \item \fieldname{sub\_nodes}: Field allows recursive nesting, forming a full ToC tree.
-        \item \fieldname{metadata}: Field can store semantic information (e.g. document type, author, timestamp, or relevance scores.)
+        \item \fieldname{nodes}: Field allows recursive nesting, forming a full PageIndex tree.
+        \item \fieldname{text} and \fieldname{summary}: Optional fields controlled by indexing settings.
     \end{itemize}
     
     \item \textbf{\large ToC Example:}
@@ -219,7 +653,7 @@ Node {
   (*@\jsonkey{"start\_index"}@*)(*@\jsoncolon@*) (*@\jsonnumber{21}@*),
   (*@\jsonkey{"end\_index"}@*)(*@\jsoncolon@*) (*@\jsonnumber{22}@*),
   (*@\jsonkey{"summary"}@*)(*@\jsoncolon@*) (*@\jsonstring{"The Federal Reserve ..."}@*),
-  (*@\jsonkey{"sub\_nodes"}@*)(*@\jsoncolon@*) [
+  (*@\jsonkey{"nodes"}@*)(*@\jsoncolon@*) [
     {
       (*@\jsonkey{"node\_id"}@*)(*@\jsoncolon@*) (*@\jsonstring{"0007"}@*),
       (*@\jsonkey{"title"}@*)(*@\jsoncolon@*) (*@\jsonstring{"Monitoring Financial Vulnerabilities"}@*),
@@ -240,7 +674,7 @@ Node {
 \end{lstlisting}
 \begin{itemize}[label=\notesquare]
     \item \fieldname{start\_index / end\_index}: Start page / End page
-    \item Each node in ToC links to corresponding \textbf{raw content} (e.g. text, images, tables)
+    \item Each node in the PageIndex tree links to corresponding \textbf{raw content} (e.g. text, images, tables)
     \begin{lstlisting}[
     language=Java,
     numbers=none,
@@ -250,7 +684,7 @@ Node {
     xrightmargin=0em,
     morekeywords={Node,string,object},
     keywordstyle=\color{gray!70!black},
-    morekeywords={[2]node_id,title,description,metadata,sub_nodes},
+    morekeywords={[2]node_id,title,start_index,end_index,summary,text,nodes},
     keywordstyle={[2]\color{blue}},
     commentstyle=\color{gray!70!black}\itshape,
     basicstyle=\ttfamily\normalsize\color{gray!70!black},
@@ -258,55 +692,52 @@ Node {
     mathescape=true,                    
     literate={->}{$\rightarrow$}{2}     
 ]
-    node_id -> node_content (raw content, extracted text, images, etc.)
+    node_id -> node object -> start_index / end_index -> cached page text
 \end{lstlisting} 
 \end{itemize}
     \begin{itemize} 
-        \item This mapping enables the LLM to \textbf{select and retrieve} specific nodes as needed.
-        \item \textbf{JSON-based ToC index} resides within the LLM's active reasoning context. 
+        \item A node-id mapping can be created from the tree for quick lookup.
+        \item Query-time tools usually give the LLM the compact tree without raw \fieldname{text}, then retrieve cached page text using the selected page range.
     \end{itemize}
 \end{itemize}
 
 
-\section{Indexing Step 2: Create Documents Record Using LLM (Can be Same LLM)}
+\section{Indexing Step 2: Create Document Record (LLM Optional)}
 
-The document-level record answers: ``Which document should answer the query?'' This record should be small, stable, and easy to filter.
+The local client creates a document record after indexing. The record step is mostly storage; it may include LLM-generated node summaries and a document-level description that were produced during indexing.
 
 \begin{itemize}
-    \item \textbf{Main fields}: \fieldname{doc\_id}, file name, title, source path, document type, author, date, language, and access permission.
-    \item \textbf{Description}: A short document-level summary used for document search.
+    \item \textbf{Main fields}: \fieldname{id}, \fieldname{type}, \fieldname{path}, \fieldname{doc\_name}, \fieldname{doc\_description}, page or line count, \fieldname{structure}, and cached page text for PDFs.
+    \item \textbf{Description}: A one-sentence document-level summary generated from a clean version of the structure when \fieldname{if\_add\_doc\_description} is enabled.
     \begin{itemize}
-        \item For a small collection, create the PageIndex ToC tree first, then derive the document-level description from the root summary, top-level node summaries, and metadata.
-        \item For a large collection, create a cheaper document-level record first using metadata, filename, abstract, title page, or a short extracted preview. Generate full PageIndex trees only for documents that are likely to be searched.
+        \item In the provided client, PDF and Markdown indexing enable document description generation.
+        \item The default lower-level config can leave document description disabled unless the caller enables it.
     \end{itemize}
-    \item \textbf{Storage pointer}: The record should point to where the full ToC tree, raw text, page images, or original PDF are stored.
+    \item \textbf{Workspace storage}: If a workspace is configured, the document JSON is written to \texttt{<doc\_id>.json}; a smaller \texttt{\_meta.json} stores lightweight metadata for startup.
 \end{itemize}
 
 \noindent\textbf{Implementation detail:}
 \begin{enumerate}
-    \item \textbf{Create a stable document id}: Each document receives an id that can be used throughout the whole pipeline. Query-time retrieval returns this id before searching inside the document tree.
-    \item \textbf{Collect basic metadata}: The record stores stable facts such as file name, title, source, year, type, language, and permission. These fields are useful for filtering and access control.
-    \item \textbf{Generate or derive a description}: The description is a short document-level summary. It can be written by the LLM from the root and top-level tree summaries, or from a short preview when the full tree has not been created yet.
-    \item \textbf{Store pointers}: The record keeps locations for the original file, tree, extracted text, page images, or other raw evidence. The record itself stays small while pointing to larger stored objects.
-    \item \textbf{Separate document record from tree}: The document record is used to decide \fieldname{which document} to search. The PageIndex tree is used later to decide \fieldname{which section} inside that document to search.
-    \item \textbf{Keep the record updateable}: If the document is re-indexed, the record can keep the same \fieldname{doc\_id} while updating its description, metadata, and storage pointers.
+    \item \textbf{Create a document id}: Each indexing call creates a new UUID. If a workspace is used, that id is persisted and can be reloaded later.
+    \item \textbf{Store core metadata}: The record stores the absolute source \fieldname{path}, document \fieldname{type}, \fieldname{doc\_name}, optional \fieldname{doc\_description}, and page or line count.
+    \item \textbf{Store the structure}: The full record contains the PageIndex \fieldname{structure}. When saved to a workspace for PDFs, raw node \fieldname{text} is stripped from the structure because page text is cached separately.
+    \item \textbf{Cache raw page evidence}: For PDFs, the client stores \fieldname{pages}, a list of page numbers and extracted text. Query-time retrieval can return selected page ranges without reopening the PDF.
+    \item \textbf{Save lightweight metadata}: Workspace mode also writes \texttt{\_meta.json}, which keeps only metadata such as type, name, description, source path, and page or line count.
 \end{enumerate}
 
 \noindent\textbf{\large Document-Level Record Example:}
-\begin{lstlisting}[style=pageindexjson,breaklines=false,basicstyle=\ttfamily\normalsize\color{gray!80!black}]
+\begin{lstlisting}[style=pageindexjson,breaklines=true,basicstyle=\ttfamily\footnotesize\color{gray!80!black}]
 {
-  (*@\jsonkey{"doc\_id"}@*)(*@\jsoncolon@*) (*@\jsonstring{"fed\_annual\_2023"}@*),
-  (*@\jsonkey{"file\_name"}@*)(*@\jsoncolon@*) (*@\jsonstring{"annual-report-2023.pdf"}@*),
-  (*@\jsonkey{"title"}@*)(*@\jsoncolon@*) (*@\jsonstring{"Federal Reserve Annual Report 2023"}@*),
-  (*@\jsonkey{"description"}@*)(*@\jsoncolon@*) (*@\jsonstring{"Annual report for document-level search."}@*),
-  (*@\jsonkey{"metadata"}@*)(*@\jsoncolon@*) {
-    (*@\jsonkey{"source"}@*)(*@\jsoncolon@*) (*@\jsonstring{"Federal Reserve"}@*),
-    (*@\jsonkey{"year"}@*)(*@\jsoncolon@*) (*@\jsonnumber{2023}@*),
-    (*@\jsonkey{"document\_type"}@*)(*@\jsoncolon@*) (*@\jsonstring{"annual\_report"}@*),
-    (*@\jsonkey{"language"}@*)(*@\jsoncolon@*) (*@\jsonstring{"en"}@*)
-  },
-  (*@\jsonkey{"toc\_tree\_uri"}@*)(*@\jsoncolon@*) (*@\jsonstring{"storage/trees/fed\_annual\_2023.json"}@*),
-  (*@\jsonkey{"raw\_file\_uri"}@*)(*@\jsoncolon@*) (*@\jsonstring{"storage/files/annual-report-2023.pdf"}@*)
+  (*@\jsonkey{"id"}@*)(*@\jsoncolon@*) (*@\jsonstring{"uuid-doc-id"}@*),
+  (*@\jsonkey{"type"}@*)(*@\jsoncolon@*) (*@\jsonstring{"pdf"}@*),
+  (*@\jsonkey{"path"}@*)(*@\jsoncolon@*) (*@\jsonstring{"/abs/path/annual-report-2023.pdf"}@*),
+  (*@\jsonkey{"doc\_name"}@*)(*@\jsoncolon@*) (*@\jsonstring{"annual-report-2023.pdf"}@*),
+  (*@\jsonkey{"doc\_description"}@*)(*@\jsoncolon@*) (*@\jsonstring{"One-sentence LLM description."}@*),
+  (*@\jsonkey{"page\_count"}@*)(*@\jsoncolon@*) (*@\jsonnumber{31}@*),
+  (*@\jsonkey{"structure"}@*)(*@\jsoncolon@*) [ ... ],
+  (*@\jsonkey{"pages"}@*)(*@\jsoncolon@*) [
+    {(*@\jsonkey{"page"}@*)(*@\jsoncolon@*) (*@\jsonnumber{1}@*), (*@\jsonkey{"content"}@*)(*@\jsoncolon@*) (*@\jsonstring{"Annual Report 2023 ..."}@*)}
+  ]
 }
 \end{lstlisting}
 
@@ -320,55 +751,56 @@ The document-level record answers: ``Which document should answer the query?'' T
     mathescape=true,
     literate={->}{$\rightarrow$}{2}
 ]
-doc_id -> document record -> ToC tree / node_map / raw files
+doc_id -> document record -> structure / cached pages / source file path
 \end{lstlisting}
 
 \section{Indexing Step 3: Build Optional Document-Search Index}
 
-This step is needed when the system has many documents. It helps choose which documents should be searched before running tree search inside them.
+This step is useful when the system has many documents, but it is not a built-in SQL/vector index in the local \texttt{pageindex} package. The package provides document records and retrieval helpers; a production system can build an external document-search index from those records.
 
 \begin{itemize}
-    \item \textbf{SQL metadata search}: Good for exact filters such as year, source, company, document type, or permission.
+    \item \textbf{SQL metadata search}: Good for exact filters such as year, source, company, document type, or permission when those fields exist in the external index.
     \item \textbf{Vector search}: Good for semantic matching against document descriptions, titles, abstracts, or top-level summaries.
 \end{itemize}
 
 \noindent\textbf{Implementation detail:}
 \begin{enumerate}
-    \item \textbf{Choose searchable fields}: The index can use title, description, metadata, abstract, root summary, and top-level section summaries. Raw full-document text is usually too large for document-level search.
-    \item \textbf{Build metadata filters}: Structured fields are stored in a database so the system can apply exact filters before semantic search. Examples include year, source, language, document type, and permission.
-    \item \textbf{Build semantic search}: Document descriptions and high-level summaries can be embedded into vectors. The user query is embedded at query time and matched against these document vectors.
-    \item \textbf{Combine retrieval signals}: Production systems often combine metadata filters, keyword search, vector similarity, and optional LLM reranking. This reduces the number of documents passed into tree search.
-    \item \textbf{Return candidate documents}: The output is a small ranked set of \fieldname{doc\_id} values. Tree search then runs only inside those selected documents.
-    \item \textbf{Handle scale}: For small collections, this step can be simple or skipped. For large collections, it is important because generating and searching every full tree for every query is expensive.
-    \item \textbf{Keep the index synchronized}: When documents are added, deleted, or re-indexed, the document-search index should update together with the document records.
+    \item \textbf{Choose searchable fields}: An external index can use \fieldname{doc\_name}, \fieldname{doc\_description}, \fieldname{type}, page or line count, and optionally high-level tree summaries.
+    \item \textbf{Build metadata filters}: Store searchable document fields in an external database for exact filters.
+    \item \textbf{Build semantic search}: Document descriptions or high-level summaries can be embedded into vectors outside the core package.
+    \item \textbf{Combine retrieval signals}: Production systems often combine metadata filters, keyword search, vector similarity, and optional LLM reranking before tree search.
+    \item \textbf{Return candidate documents}: The output is a small ranked set of \fieldname{doc\_id} values. The local retrieval helpers expect a known \fieldname{doc\_id}.
+    \item \textbf{Handle scale}: For small collections, this step can be simple or skipped. For large collections, it avoids running tree search over every document.
+    \item \textbf{Keep the index synchronized}: When documents are added, deleted, or re-indexed, the external document-search index should update together with the PageIndex workspace records.
 \end{enumerate}
 
-\section{Query Step 1: Document Search (Can be same LLM)}
+\section{Query Step 1: Document Search (External or Agent-Level)}
 
-It uses the document-level index and returns candidate \fieldname{doc\_id} values.
+For multiple documents, an external index or an agent chooses candidate \fieldname{doc\_id} values. The local package itself exposes document metadata by id, but does not rank all documents by query.
 
 \begin{itemize}
-    \item \textbf{Input}: User question, optional filters, and conversation context if needed.
-    \item \textbf{Output}: A ranked list of candidate documents.
+    \item \textbf{Input}: User question, optional filters, and available document metadata.
+    \item \textbf{Output}: A ranked list of candidate \fieldname{doc\_id} values.
 \end{itemize}
 
-\section{Query Step 2: Tree Search (Can be same LLM)}
+\section{Query Step 2: Tree Search (Can Use Same or Retrieval LLM)}
 
-The LLM reads the PageIndex ToC tree for each selected document, usually without the full raw document text, and selects relevant \fieldname{node\_id} values.
+The retrieval model or agent reads the PageIndex tree for each selected document, usually without raw node text, and selects relevant nodes or page ranges.
 
 \begin{itemize}
-    \item \textbf{Input}: User question, selected \fieldname{doc\_id}, and that document's ToC tree.
-    \item \textbf{Output}: Relevant \fieldname{node\_id} values, often with short reasons.
+    \item \textbf{Input}: User question, selected \fieldname{doc\_id}, and that document's compact tree with raw text removed.
+    \item \textbf{Output}: Relevant \fieldname{node\_id} values or page ranges, often with short reasons.
 \end{itemize}
 
 \section{Query Step 3: Retrieve Raw Content}
 
-After tree search selects nodes, the system uses \fieldname{node\_map} to fetch the real evidence.
+After tree search selects nodes or page ranges, the system retrieves the corresponding raw evidence.
+\par In the local retrieval helpers, raw evidence is fetched by page range from cached pages. A node-id map can translate selected \fieldname{node\_id} values into page ranges.
 
-\section{Query Step 4: Answer the Question (C)}
+\section{Query Step 4: Answer the Question (Can Use Same or Answering LLM)}
 
 \begin{itemize}
-    \item \textbf{Input}: User question, retrieved evidence, page numbers, \fieldname{doc\_id}, and \fieldname{node\_id}.
+    \item \textbf{Input}: User question, retrieved evidence, page numbers, \fieldname{doc\_id}, and optional \fieldname{node\_id}.
     \item \textbf{Output}: A grounded answer with citations to pages, nodes, or documents.
 \end{itemize}
 
@@ -381,7 +813,7 @@ In a multi-document system, retrieval is usually split into two levels.
 
 \begin{itemize}
     \item \textbf{Document search}: Find the relevant document records. The output is one or more \fieldname{doc\_id} values.
-    \item \textbf{Tree search}: Search inside each selected document's PageIndex ToC tree. The output is one or more \fieldname{node\_id} values.
+    \item \textbf{Tree search}: Search inside each selected document's PageIndex tree. The output is one or more \fieldname{node\_id} values or page ranges.
 \end{itemize}
 
 \begin{lstlisting}[
@@ -407,9 +839,9 @@ query -> doc-search -> doc_id -> tree-search -> node_id -> raw content -> answer
 This demo starts at the \textbf{tree-search} level because the document is already known.
 
 \begin{enumerate}
-    \item \textbf{Convert PDF to Tree(ToC)}: PageIndex creates node titles, summaries, page indexes, raw text, and node ids.
+    \item \textbf{Convert PDF to PageIndex tree}: PageIndex creates node titles, summaries, page indexes, raw text, and node ids.
     \item \textbf{Tree search}: Give the LLM the question and the tree without raw text. The LLM returns relevant \fieldname{node\_id} values.
-    \item \textbf{Map nodes to content}: Use \fieldname{node\_map} to locate the full content for each selected id.
+    \item \textbf{Map nodes to content}: Use a node-id mapping or the node's \fieldname{start\_index}/\fieldname{end\_index} range to locate the full content.
     \item \textbf{Generate answer}: Feed only the selected node text to the LLM to answer.
 \end{enumerate}
 
@@ -420,7 +852,7 @@ This demo starts at the \textbf{tree-search} level because the document is alrea
 This demo also starts from one known document, but the final answer is generated from rendered page images.
 
 \begin{enumerate}
-    \item \textbf{Convert PDF to Tree(ToC)}: PageIndex creates node titles, summaries, page indexes, raw text, and node ids.
+    \item \textbf{Convert PDF to PageIndex tree}: PageIndex creates node titles, summaries, page indexes, raw text, and node ids.
     \item \textbf{Render pages}: Convert PDF pages into image files.
     \item \textbf{Tree search}: Use a multimodal model as a text-only model to select nodes from the tree.
     \item \textbf{Collect page images}: Convert selected nodes into page ranges and get page images.
@@ -465,7 +897,7 @@ Agentic retrieval is not just ``LLM retrieves then LLM answers.'' Normal PageInd
 \textbf{Method} & \textbf{Main Role} & \textbf{Flow Summary} \\
 \midrule
 Document Search & Select document(s) & Query $\rightarrow$ document index $\rightarrow$ \fieldname{doc\_id} \\
-Tree Search & Select section(s) & \fieldname{doc\_id} $\rightarrow$ ToC tree $\rightarrow$ \fieldname{node\_id} \\
+Tree Search & Select section(s) & \fieldname{doc\_id} $\rightarrow$ PageIndex tree $\rightarrow$ \fieldname{node\_id} \\
 Manual Text RAG & Custom text QA & Tree $\rightarrow$ node ids $\rightarrow$ node text $\rightarrow$ answer \\
 Vision RAG & Visual document QA & Tree $\rightarrow$ node ids $\rightarrow$ page images $\rightarrow$ VLM answer \\
 Chat Quickstart & Simple hosted QA & Document id $\rightarrow$ PageIndex chat API $\rightarrow$ streamed answer \\
